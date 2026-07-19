@@ -36,7 +36,21 @@ const allowedOrigins = [
 ];
 
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"]
+    }
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
 }));
 app.use(cors({
   origin(origin, callback) {
@@ -48,14 +62,19 @@ app.use(cors({
 app.use(express.json({ limit: "1mb" }));
 app.use(morgan("dev"));
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 500 }));
+
+// Serve static files FIRST - before any API/database checks
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-app.use(express.static(path.join(__dirname, "../frontend/public"))); // Serve frontend public folder
+app.use(express.static(path.join(__dirname, "../frontend/public")));
+const frontendBuildPath = path.join(__dirname, "../frontend/dist");
+app.use(express.static(frontendBuildPath));
 
 // Favicon fallback (serve logo.png as favicon if favicon.ico doesn't exist)
 app.get("/favicon.ico", (_req, res) => {
   res.sendFile(path.join(__dirname, "../frontend/public/logo.png"));
 });
 
+// API routes
 app.get("/api/health", (_req, res) => {
   const database = getDbStatus();
   res.status(database.connected ? 200 : 503).json({ ok: database.connected, service: "eligible-flow-api", database });
@@ -79,11 +98,7 @@ app.use("/api/spreadsheets", spreadsheetRoutes);
 app.use("/api/drives", driveRoutes);
 app.use("/api/records", recordsRoutes);
 
-// Serve frontend static files in production
-const frontendBuildPath = path.join(__dirname, "../frontend/dist");
-app.use(express.static(frontendBuildPath));
-
-// Catch-all route to serve index.html for React Router
+// Catch-all for React Router - only for non-API, non-static requests
 app.get("*", (_req, res) => {
   res.sendFile(path.join(frontendBuildPath, "index.html"));
 });
