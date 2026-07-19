@@ -73,6 +73,15 @@ app.use("/api/spreadsheets", spreadsheetRoutes);
 app.use("/api/drives", driveRoutes);
 app.use("/api/records", recordsRoutes);
 
+// Serve frontend static files in production
+const frontendBuildPath = path.join(__dirname, "../frontend/dist");
+app.use(express.static(frontendBuildPath));
+
+// Catch-all route to serve index.html for React Router
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(frontendBuildPath, "index.html"));
+});
+
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(err.status || 500).json({ message: err.message || "Server error" });
