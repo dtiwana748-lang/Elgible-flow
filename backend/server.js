@@ -49,6 +49,12 @@ app.use(express.json({ limit: "1mb" }));
 app.use(morgan("dev"));
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 500 }));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+app.use(express.static(path.join(__dirname, "../frontend/public"))); // Serve frontend public folder
+
+// Favicon fallback (serve logo.png as favicon if favicon.ico doesn't exist)
+app.get("/favicon.ico", (_req, res) => {
+  res.sendFile(path.join(__dirname, "../frontend/public/logo.png"));
+});
 
 app.get("/api/health", (_req, res) => {
   const database = getDbStatus();
