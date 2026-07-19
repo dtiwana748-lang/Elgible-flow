@@ -1,5 +1,7 @@
-export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
-export const API_ORIGIN = API_URL.replace(/\/api\/?$/, "");
+export const API_URL = import.meta.env.VITE_API_URL || "/api";
+export const API_ORIGIN = API_URL.startsWith("http")
+  ? API_URL.replace(/\/api\/?$/, "")
+  : window.location.origin;
 
 export async function api(path, options = {}) {
   const token = localStorage.getItem("eligibleFlowToken");
@@ -11,7 +13,7 @@ export async function api(path, options = {}) {
   try {
     response = await fetch(`${API_URL}${path}`, { ...options, headers });
   } catch {
-    throw new Error("API server is not reachable. Make sure the backend is running on port 5000.");
+    throw new Error("API server is not reachable. Start the backend with npm run server, or run npm run dev from the project root.");
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.message || "Request failed");

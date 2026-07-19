@@ -1,16 +1,14 @@
-import { Router } from "express";
-import { parse } from "csv-parse/sync";
-import { z } from "zod";
-import crypto from "crypto";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import "dotenv/config";
+import { connectDb } from "../config/db.js";
 import { SpreadsheetConnection } from "../models/SpreadsheetConnection.js";
 import { SpreadsheetSyncLog } from "../models/SpreadsheetSyncLog.js";
 import { Student } from "../models/Student.js";
-import { writeAudit } from "../utils/audit.js";
 import { calculateCGPA } from "../utils/studentRules.js";
+import crypto from "crypto";
+import { parse } from "csv-parse/sync";
+import mongoose from "mongoose";
 
-const router = Router();
-
+// Duplicate helper functions from routes to sync cleanly
 const systemFields = new Set([
   "rollNo", "enrollmentNo", "registrationNo", "grNo", "universityId", "name", "email", "phone",
   "fatherContactNo", "batch", "admissionYear", "passingYear", "department", "course", "program",
@@ -20,15 +18,6 @@ const systemFields = new Set([
   "category", "gender", "dob", "domicileCity", "domicileState", "address", "college",
   "placementStatus", "resumeUrl", "status"
 ]);
-
-function extractSheetId(sheetUrl) {
-  const match = sheetUrl.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  return match?.[1];
-}
-
-function extractGid(sheetUrl) {
-  return sheetUrl.match(/[?&#]gid=(\d+)/)?.[1] || "0";
-}
 
 function sanitizeCell(value) {
   if (typeof value !== "string") return value;
@@ -102,7 +91,6 @@ function inferSystemField(header) {
   if (key.includes("placement")) return "placementStatus";
   if (key.includes("resume")) return "resumeUrl";
   
-  // Check for semester percentage/status
   const semMatch = key.match(/sem(\d+)/);
   if (semMatch) {
     const semNum = semMatch[1];
@@ -130,11 +118,9 @@ function parseDate(value) {
   const str = String(value).trim();
   if (!str) return undefined;
   
-  // Try standard JS Date parsing first
   const d = new Date(str);
   if (Number.isFinite(d.getTime())) return d;
   
-  // Handle DD-MM-YYYY or DD/MM/YYYY or DD.MM.YYYY
   const parts = str.split(/[-/.]/);
   if (parts.length === 3) {
     const part0 = Number(parts[0]);
@@ -142,11 +128,9 @@ function parseDate(value) {
     const part2 = Number(parts[2]);
     
     if (parts[2].length === 4 && part0 >= 1 && part0 <= 31 && part1 >= 1 && part1 <= 12) {
-      // DD-MM-YYYY
       return new Date(part2, part1 - 1, part0);
     }
     if (parts[0].length === 4 && part1 >= 1 && part1 <= 12 && part2 >= 1 && part2 <= 31) {
-      // YYYY-MM-DD
       return new Date(part0, part1 - 1, part2);
     }
   }
@@ -168,13 +152,11 @@ function buildStudentPayload(row, mapping, connection, rowNumber) {
   
   const usableMapping = effectiveMapping(row, mapping);
   
-  // Process each mapped column
   for (const [sheetColumn, systemField] of Object.entries(usableMapping)) {
     const raw = sanitizeCell(row[sheetColumn]);
     if (!systemField || systemField === "customFields") {
       payload.customFields[sheetColumn] = raw;
     } else if (systemField.startsWith("semester.")) {
-      // Handle semester subfields
       const parts = systemField.split(".");
       const semNum = parts[1];
       const subField = parts[2];
@@ -195,14 +177,12 @@ function buildStudentPayload(row, mapping, connection, rowNumber) {
     }
   }
   
-  // Add any remaining columns as custom fields
   for (const [key, value] of Object.entries(row)) {
     if (!Object.keys(usableMapping).includes(key) || usableMapping[key] === "customFields") {
       payload.customFields[key] = sanitizeCell(value);
     }
   }
   
-  // Normalize number fields
   const numericFields = [
     "semester", "cgpa", "attendance", "backlogs", "activeBacklogs", "totalBacklogs",
     "admissionYear", "passingYear", "percentage", "tenthPercentage", "tenthPassingYear",
@@ -212,16 +192,13 @@ function buildStudentPayload(row, mapping, connection, rowNumber) {
     if (field in payload) payload[field] = normalizeNumber(payload[field]);
   });
   
-  // Calculate CGPA from semesters
   const cgpaResult = calculateCGPA(payload);
   payload.cgpa = payload.cgpa ?? cgpaResult.average;
   
-  // Scale down CGPA if entered as a percentage (e.g. > 10)
   if (payload.cgpa !== undefined && payload.cgpa !== null && payload.cgpa > 10) {
     payload.cgpa = payload.cgpa / 10;
   }
   
-  // Fallback values
   payload.course = payload.course || payload.branch || "Unmapped";
   payload.batch = connection.batch || payload.batch || payload.passingYear || "Unmapped";
   payload.backlogs = payload.backlogs ?? payload.activeBacklogs ?? 0;
@@ -231,7 +208,6 @@ function buildStudentPayload(row, mapping, connection, rowNumber) {
   payload.attendance = payload.attendance ?? 0;
   payload.name = payload.name || "Unnamed Student";
   payload.rollNo = payload.rollNo || payload.enrollmentNo || payload.registrationNo || payload.email;
-  // Use row number + connection ID to guarantee uniqueness, even if other fields are missing!
   payload.studentId = payload.enrollmentNo || payload.registrationNo || payload.grNo || payload.universityId || payload.rollNo || payload.email || `${connection._id.toString()}-row-${rowNumber}`;
   payload.source.rowHash = crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex");
   
@@ -239,14 +215,14 @@ function buildStudentPayload(row, mapping, connection, rowNumber) {
 }
 
 function studentMatch(payload) {
-  if (payload.grNo) return { grNo: payload.grNo }; // Check grNo first (most unique)
+  if (payload.grNo) return { grNo: payload.grNo };
   if (payload.universityId) return { universityId: payload.universityId };
   if (payload.enrollmentNo) return { enrollmentNo: payload.enrollmentNo };
   if (payload.registrationNo) return { registrationNo: payload.registrationNo };
   if (payload.rollNo && payload.department && payload.department !== "Unmapped") {
     return { rollNo: payload.rollNo, department: payload.department };
   }
-  if (payload.rollNo) return { rollNo: payload.rollNo }; // If department is Unmapped, just use rollNo
+  if (payload.rollNo) return { rollNo: payload.rollNo };
   if (payload.email) return { email: payload.email };
   return { studentId: payload.studentId };
 }
@@ -258,137 +234,94 @@ async function fetchCsv(connection) {
   return response.text();
 }
 
-router.use(requireAuth);
+async function runSync() {
+  await connectDb();
+  const connections = await SpreadsheetConnection.find();
+  if (connections.length === 0) {
+    console.error("No Spreadsheet Connections found in DB.");
+    mongoose.connection.close();
+    process.exit(1);
+  }
+  
+  for (const connection of connections) {
+    console.log(`\n=== Starting Sync for Batch: ${connection.batch || "Unmapped"} (${connection.name}) ===`);
+    console.log("Found connection ID:", connection._id);
+    console.log("Sheet URL:", connection.sheetUrl);
 
-router.get("/connection", requireRole("HOD"), async (_req, res) => {
-  const connections = await SpreadsheetConnection.find().sort({ batch: 1 });
-  const logs = await SpreadsheetSyncLog.find().sort({ createdAt: -1 }).limit(10);
-  res.json({ connections, logs });
-});
+    const log = await SpreadsheetSyncLog.create({ connection: connection._id, startedBy: new mongoose.Types.ObjectId("6a5b76765b198b02d0142a1f") }); // Seed user or existing HOD
+    const summary = { totalRows: 0, successfulRows: 0, failedRows: 0, newRecords: 0, updatedRecords: 0, unchangedRecords: 0, duplicateRecords: 0, conflictCount: 0 };
+    const errors = [];
 
-router.post("/connection", requireRole("HOD"), async (req, res) => {
-  const parsed = z.object({
-    sheetUrl: z.string().url(),
-    worksheetName: z.string().optional(),
-    batch: z.string().min(1),
-    columnMapping: z.record(z.string()).optional()
-  }).safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ message: "Valid Google Sheet URL and Batch are required" });
+    try {
+      const csv = await fetchCsv(connection);
+      const rows = parse(csv, { columns: true, skip_empty_lines: true, trim: true });
+      console.log("CSV parsed successfully! Number of rows:", rows.length);
+      summary.totalRows = rows.length;
 
-  const sheetId = extractSheetId(parsed.data.sheetUrl);
-  if (!sheetId) return res.status(400).json({ message: "This does not look like a valid Google Sheet link" });
+      // Delete existing students for this connection to do a fresh sync
+      await Student.deleteMany({ "source.connection": connection._id });
+      console.log(`Cleared existing students for connection ${connection._id} from database.`);
 
-  // Delete any existing connection for this batch to prevent duplicates
-  await SpreadsheetConnection.deleteMany({ batch: parsed.data.batch });
-
-  const connection = await SpreadsheetConnection.create({
-    name: `Master Student Sheet - ${parsed.data.batch}`,
-    batch: parsed.data.batch,
-    sheetUrl: parsed.data.sheetUrl,
-    sheetId,
-    gid: extractGid(parsed.data.sheetUrl),
-    worksheetName: parsed.data.worksheetName || "Sheet1",
-    columnMapping: parsed.data.columnMapping || {},
-    createdBy: req.user._id
-  });
-  await writeAudit({ actor: req.user._id, action: "SHEET_CONNECTED", entity: "SpreadsheetConnection", entityId: connection._id });
-  res.status(201).json(connection);
-});
-
-router.delete("/connection/:id", requireRole("HOD"), async (req, res) => {
-  const connection = await SpreadsheetConnection.findByIdAndDelete(req.params.id);
-  if (!connection) return res.status(404).json({ message: "Connection not found" });
-  await writeAudit({ actor: req.user._id, action: "SHEET_DISCONNECTED", entity: "SpreadsheetConnection", entityId: connection._id });
-  res.json({ message: "Connection disconnected successfully" });
-});
-
-router.post("/connection/test", requireRole("HOD"), async (req, res) => {
-  const sheetId = extractSheetId(req.body.sheetUrl || "");
-  if (!sheetId) return res.status(400).json({ message: "Valid Google Sheet URL is required" });
-  const connection = { sheetId, gid: extractGid(req.body.sheetUrl) };
-  const csv = await fetchCsv(connection);
-  const rows = parse(csv, { columns: true, skip_empty_lines: true, trim: true });
-  res.json({ headers: rows.length ? Object.keys(rows[0]) : [], sampleRows: rows.slice(0, 5), totalRows: rows.length });
-});
-
-router.post("/connection/:id/sync", requireRole("HOD"), async (req, res) => {
-  const connection = await SpreadsheetConnection.findById(req.params.id);
-  if (!connection) return res.status(404).json({ message: "Sheet connection not found" });
-  const log = await SpreadsheetSyncLog.create({ connection: connection._id, startedBy: req.user._id });
-  const summary = { totalRows: 0, successfulRows: 0, failedRows: 0, newRecords: 0, updatedRecords: 0, unchangedRecords: 0, duplicateRecords: 0, conflictCount: 0 };
-  const errors = [];
-
-  try {
-    const csv = await fetchCsv(connection);
-    const rows = parse(csv, { columns: true, skip_empty_lines: true, trim: true });
-    console.log("CSV parsed successfully! Number of rows:", rows.length);
-    summary.totalRows = rows.length;
-
-    console.log("=== STARTING SYNC ===");
-    console.log("Connection columnMapping:", connection.columnMapping);
-    
-    for (let index = 0; index < rows.length; index += 1) {
-      try {
-        const payload = buildStudentPayload(rows[index], connection.columnMapping || {}, connection._id, index + 2);
-        const match = studentMatch(payload);
-        
-        if (index < 5) { // Log first 5 payloads for debugging
-          console.log(`Row ${index + 2} - Payload:`, payload);
-          console.log(`Row ${index + 2} - Match criteria:`, match);
-        }
-        
-        const existing = await Student.findOne(match);
-        
-        if (!existing) {
-          await Student.create({ ...payload, createdBy: req.user._id });
-          summary.newRecords += 1;
-          if (summary.newRecords <= 5) console.log(`Created new student for row ${index + 2}`);
-        } else if (existing.source?.rowHash === payload.source.rowHash) {
-          existing.sourceStatus = "SYNCED";
-          existing.source.lastSeenAt = new Date();
-          await existing.save();
-          summary.unchangedRecords += 1;
-        } else {
-          await Student.updateOne({ _id: existing._id }, { $set: payload });
-          summary.updatedRecords += 1;
-        }
-        
-        summary.successfulRows += 1;
-        
-        if (summary.successfulRows % 100 === 0) {
-          console.log(`Processed ${summary.successfulRows} rows so far...`);
-        }
-      } catch (error) {
-        summary.failedRows += 1;
-        errors.push({ row: index + 2, message: error.message });
-        if (summary.failedRows <= 20) { // Log first 20 errors
-          console.error(`Error processing row ${index + 2}:`, error.message, error.stack);
+      for (let index = 0; index < rows.length; index += 1) {
+        try {
+          const payload = buildStudentPayload(rows[index], connection.columnMapping || {}, connection, index + 2);
+          const match = studentMatch(payload);
+          
+          const existing = await Student.findOne(match);
+          if (!existing) {
+            await Student.create({ ...payload, createdBy: new mongoose.Types.ObjectId("6a5b76765b198b02d0142a1f") });
+            summary.newRecords += 1;
+          } else if (existing.source?.rowHash === payload.source.rowHash) {
+            existing.sourceStatus = "SYNCED";
+            existing.source.lastSeenAt = new Date();
+            await existing.save();
+            summary.unchangedRecords += 1;
+          } else {
+            await Student.updateOne({ _id: existing._id }, { $set: payload });
+            summary.updatedRecords += 1;
+          }
+          
+          summary.successfulRows += 1;
+          if (summary.successfulRows % 200 === 0) {
+            console.log(`Processed ${summary.successfulRows} / ${rows.length} rows...`);
+          }
+        } catch (error) {
+          summary.failedRows += 1;
+          errors.push({ row: index + 2, message: error.message });
+          if (summary.failedRows <= 10) {
+            console.error(`Error processing row ${index + 2}:`, error.message);
+          }
         }
       }
+
+      console.log("=== SYNC FINAL SUMMARY ===");
+      console.log(summary);
+      if (errors.length > 0) {
+        console.log(`Errors count: ${errors.length}. Sample:`, errors.slice(0, 5));
+      }
+
+      await Student.updateMany({ "source.connection": connection._id, "source.lastSeenAt": { $lt: log.startedAt } }, { $set: { sourceStatus: "MISSING_FROM_SOURCE" } });
+      connection.lastSyncAt = new Date();
+      connection.lastSummary = summary;
+      await connection.save();
+      
+      log.status = "COMPLETED";
+      log.summary = summary;
+      log.errors = errors;
+      log.finishedAt = new Date();
+      await log.save();
+      console.log("Sync log updated in database.");
+    } catch (error) {
+      console.error("Sync crashed:", error.message);
+      log.status = "FAILED";
+      log.errors = [{ message: error.message }];
+      log.finishedAt = new Date();
+      await log.save();
     }
-    
-    console.log("=== SYNC FINAL SUMMARY ===");
-    console.log(summary);
-    if (errors.length > 0) console.log("Errors:", errors);
-
-    await Student.updateMany({ "source.connection": connection._id, "source.lastSeenAt": { $lt: log.startedAt } }, { $set: { sourceStatus: "MISSING_FROM_SOURCE" } });
-    connection.lastSyncAt = new Date();
-    connection.lastSummary = summary;
-    await connection.save();
-    log.status = "COMPLETED";
-    log.summary = summary;
-    log.errors = errors;
-    log.finishedAt = new Date();
-    await log.save();
-    await writeAudit({ actor: req.user._id, action: "SHEET_SYNCED", entity: "SpreadsheetConnection", entityId: connection._id, metadata: summary });
-    res.json({ summary, errors });
-  } catch (error) {
-    log.status = "FAILED";
-    log.errors = [{ message: error.message }];
-    log.finishedAt = new Date();
-    await log.save();
-    res.status(400).json({ message: error.message });
   }
-});
+  
+  mongoose.connection.close();
+  process.exit(0);
+}
 
-export default router;
+runSync();

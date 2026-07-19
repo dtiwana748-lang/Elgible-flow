@@ -31,6 +31,7 @@ router.get("/", async (_req, res) => {
     assignedBatches: user.assignedBatches,
     active: user.active,
     lastLoginAt: user.lastLoginAt,
+    profileImage: user.profileImage,
     createdAt: user.createdAt
   })));
 });

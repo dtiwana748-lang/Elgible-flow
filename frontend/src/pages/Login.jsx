@@ -18,7 +18,7 @@ export default function Login() {
   const [imageFailed, setImageFailed] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const loginImage = useMemo(() => safeImageUrl(import.meta.env.VITE_LOGIN_PAGE_IMAGE_URL), []);
+  const loginImage = useMemo(() => safeImageUrl("https://i.ibb.co/hJxLd0Lh/1053415.jpg"), []);
 
   async function submit(event) {
     event.preventDefault();

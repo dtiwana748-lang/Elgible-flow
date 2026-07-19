@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3, Bell, BriefcaseBusiness, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
-  FileDown, Gauge, GraduationCap, Home, LayoutDashboard, LogOut, RefreshCcw, Save, Search, Settings2, ShieldCheck, UserCog, UserPlus, UsersRound
+  FileDown, Gauge, GraduationCap, Home, LayoutDashboard, ListChecks, LogOut, RefreshCcw, Save, Search, Settings2, ShieldCheck, UserCog, UserPlus, UsersRound
 } from "lucide-react";
 import { api, API_URL } from "../api.js";
 import { assetUrl } from "../api.js";
@@ -9,6 +9,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 
 const hodNav = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "eligibility", label: "Eligibility Lists", icon: ListChecks },
   { id: "managers", label: "Managers", icon: UsersRound },
   { id: "records", label: "Records", icon: Database },
   { id: "profile", label: "Profile", icon: UserCog }
@@ -16,6 +17,8 @@ const hodNav = [
 
 const makerNav = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "eligibility", label: "Eligibility Lists", icon: ListChecks },
+  { id: "master-data", label: "Master Data", icon: Database },
   { id: "drives", label: "My Drives", icon: BriefcaseBusiness },
   { id: "profile", label: "Profile", icon: UserCog }
 ];
@@ -44,9 +47,17 @@ function labelFor(field) {
   return fieldLabels[field] || field.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
 }
 
+function formatCgpa(value) {
+  if (value === undefined || value === null || value === "") return "-";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return number.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 export default function Dashboard() {
   const { user, logout } = useAuth();
   const [active, setActive] = useState("dashboard");
+  const [selectedEligibilityList, setSelectedEligibilityList] = useState(null);
   const isHod = user.role === "HOD";
   const nav = isHod ? hodNav : makerNav;
 
@@ -57,6 +68,10 @@ export default function Dashboard() {
         {active === "dashboard" && <DashboardHome user={user} setActive={setActive} />}
         {active === "managers" && isHod && <ManagersPage />}
         {active === "records" && isHod && <RecordsPage />}
+        {active === "eligibility" && <EligibilityListsPage setSelectedList={setSelectedEligibilityList} setActive={setActive} isHod={isHod} />}
+        {active === "create-eligibility" && !isHod && <CreateEligibilityListPage onComplete={(list) => { setSelectedEligibilityList(list); setActive("eligibility"); }} />}
+        {active === "view-eligibility" && selectedEligibilityList && <EligibilityListDetailPage list={selectedEligibilityList} back={() => setActive("eligibility")} isHod={isHod} />}
+        {active === "master-data" && !isHod && <MasterDataReadOnlyPage />}
         {active === "drives" && !isHod && <DriveWisePage user={user} />}
         {active === "profile" && <ProfilePage user={user} />}
       </section>
@@ -65,34 +80,53 @@ export default function Dashboard() {
 }
 
 function RoleSidebar({ nav, active, setActive, user, logout }) {
-  const [collapsed, setCollapsed] = useState(false);
   return (
-    <aside className={`sidebar pro ${collapsed ? "collapsed" : ""}`}>
-      <button className="collapse-button" onClick={() => setCollapsed((value) => !value)} title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-        {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-      </button>
-      <div className="brand-lockup compact">
-        <img src="/logo.png" alt="Eligibility Flow logo" />
-        {!collapsed && (
+    <>
+      {/* Desktop Sidebar */}
+      <aside className="sidebar pro desktop-sidebar">
+        <div className="brand-lockup compact">
+          <img src="/logo.png" alt="Eligibility Flow logo" />
           <div>
             <h1>Eligibility Flow</h1>
             <p>{user.role === "HOD" ? "Administration" : "List Maker"}</p>
           </div>
-        )}
-      </div>
-      <nav>
+        </div>
+        <nav>
+          {nav.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.id} className={`nav-item ${active === item.id ? "active" : ""}`} onClick={() => setActive(item.id)} title={item.label}>
+                <Icon size={18} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+        <button className="ghost signout" onClick={logout} title="Sign out"><LogOut size={17} /> Sign Out</button>
+      </aside>
+
+      {/* Mobile Bottom Navigation */}
+      <nav className="mobile-bottom-nav">
         {nav.map((item) => {
           const Icon = item.icon;
           return (
-            <button key={item.id} className={`nav-item ${active === item.id ? "active" : ""}`} onClick={() => setActive(item.id)} title={item.label}>
-              <Icon size={18} />
-              {!collapsed && <span>{item.label}</span>}
+            <button
+              key={item.id}
+              className={`mobile-nav-item ${active === item.id ? "active" : ""}`}
+              onClick={() => setActive(item.id)}
+              title={item.label}
+            >
+              <Icon size={22} />
+              <span>{item.label}</span>
             </button>
           );
         })}
+        <button className="mobile-nav-item" onClick={logout} title="Sign Out">
+          <LogOut size={22} />
+          <span>Logout</span>
+        </button>
       </nav>
-      <button className="ghost signout" onClick={logout} title="Sign out"><LogOut size={17} /> {!collapsed && "Sign Out"}</button>
-    </aside>
+    </>
   );
 }
 
@@ -235,9 +269,9 @@ function DashboardHome({ user, setActive }) {
       </section>
       <section className="metrics wide">
         <StatCard icon={FileSpreadsheet} label="Total Student Records" value={stats.totalStudents || 0} support="All synced master records" onClick={() => setActive("records")} />
-        <StatCard icon={CheckCircle2} label="Total Eligible Students" value={stats.eligibleStudents || 0} support="Across all criteria" />
-        <StatCard icon={ShieldCheck} label="Registered Students" value={stats.registeredStudents || 0} support="Drive registrations" />
-        <StatCard icon={Gauge} label="Non-Registered Students" value={stats.nonRegisteredStudents || 0} support="Pending registration" />
+        <StatCard icon={CheckCircle2} label="Total Active" value={stats.totalActive || 0} support="Active students in sheet" />
+        <StatCard icon={ShieldCheck} label="Total Stuck Off" value={stats.totalStuckOff || 0} support="Stuck off students" />
+        <StatCard icon={Gauge} label="Students with NOC" value={stats.totalNoc || 0} support="Students having NOC status" />
       </section>
       {isHod && (
         <StudentSearchPanel
@@ -483,16 +517,35 @@ function ManagersPage() {
           <button><UserPlus size={17} /> Save List Maker</button>
         </form>
       </section>
-      <DataTable
-        columns={["Name", "Official Email", "Personal Email", "Status", "Last Login", "Created"]}
-        rows={managers.map((m) => [m.name, m.email, m.personalEmail || "-", m.active ? "Active" : "Inactive", m.lastLoginAt ? new Date(m.lastLoginAt).toLocaleString() : "-", new Date(m.createdAt).toLocaleDateString()])}
-      />
+
+      <section className="panel" style={{ marginTop: "22px", overflow: "visible" }}>
+        <h3 style={{ margin: "0 0 16px 0", display: "flex", alignItems: "center", gap: "8px" }}>
+          <UsersRound size={18} /> Registered List Makers
+        </h3>
+        <DataTable
+          columns={["Name", "Official Email", "Personal Email", "Status", "Last Login", "Created"]}
+          rows={managers.map((m) => [
+            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <div className="header-profile" style={{ width: "30px", height: "30px", border: "1px solid var(--line)" }} title={m.name}>
+                {m.profileImage ? <img src={assetUrl(m.profileImage)} alt="" /> : <span style={{ fontSize: "12px" }}>{m.name.slice(0, 1).toUpperCase()}</span>}
+              </div>
+              <strong>{m.name}</strong>
+            </div>,
+            m.email,
+            m.personalEmail || "-",
+            <span key={`${m.id}-status`} className={`status ${m.active ? "approved" : "rejected"}`}>{m.active ? "Active" : "Inactive"}</span>,
+            m.lastLoginAt ? new Date(m.lastLoginAt).toLocaleString() : "-",
+            new Date(m.createdAt).toLocaleDateString()
+          ])}
+        />
+      </section>
     </>
   );
 }
 
 function RecordsPage() {
-  const [connection, setConnection] = useState(null);
+  const [connections, setConnections] = useState([]);
+  const [newBatch, setNewBatch] = useState("2027");
   const [logs, setLogs] = useState([]);
   const [sheetUrl, setSheetUrl] = useState("");
   const [headers, setHeaders] = useState([]);
@@ -501,55 +554,143 @@ function RecordsPage() {
   const [filters, setFilters] = useState({ search: "", batch: "", department: "", course: "", program: "", semester: "", page: 1, limit: 50 });
   const [selected, setSelected] = useState(null);
   const [message, setMessage] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [syncResult, setSyncResult] = useState(null);
 
   const query = useMemo(() => new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== "")).toString(), [filters]);
-  const sheetColumns = headers.length || Object.keys(connection?.columnMapping || {}).length || 0;
-  const connectionColumns = connection ? sheetColumns + 1 : 0;
-  const lastSync = connection?.lastSyncAt ? new Date(connection.lastSyncAt).toLocaleString() : "-";
 
   async function loadConnection() {
     const data = await api("/spreadsheets/connection");
-    setConnection(data.connection);
-    if (data.connection?.sheetUrl) setSheetUrl(data.connection.sheetUrl);
+    setConnections(data.connections || []);
     setLogs(data.logs || []);
   }
   async function loadStudents() {
-    setStudents(await api(`/records/students?${query}`));
+    setLoadError("");
+    try {
+      setStudents(await api(`/records/students?${query}`));
+    } catch (err) {
+      setLoadError(err.message);
+    }
   }
   useEffect(() => { loadConnection(); }, []);
   useEffect(() => { loadStudents(); }, [query]);
+
+  // Helper function to auto-map columns (matches backend logic)
+  function inferFrontend(header) {
+    const key = header.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (key === "status") return "status";
+    if (key.includes("grno")) return "grNo";
+    if (key.includes("universityid")) return "universityId";
+    if (key.includes("enrollment")) return "enrollmentNo";
+    if (key.includes("registration")) return "registrationNo";
+    if (key.includes("roll")) return "rollNo";
+    if (key.includes("studentname") || key.includes("student_name") || key.includes("name")) return "name";
+    if (key.includes("email") || key.includes("mail")) return "email";
+    if (key.includes("father") && (key.includes("phone") || key.includes("contact") || key.includes("mobile"))) return "fatherContactNo";
+    if (key.includes("phone") || key.includes("mobile") || key.includes("contact")) return "phone";
+    if (key.includes("batch")) return "batch";
+    if (key.includes("admission")) return "admissionYear";
+    if (key.includes("passout") || key.includes("passingyear")) return "passingYear";
+    if (key.includes("department")) return "department";
+    if (key.includes("branch")) return "branch";
+    if (key.includes("course")) return "course";
+    if (key.includes("program")) return "program";
+    if (key.includes("specialization")) return "specialization";
+    if (key.includes("currentsemester") || key.includes("semester") || key === "sem") return "semester";
+    if (key.includes("section")) return "section";
+    if (key.includes("average") && key.includes("cgpa")) return "cgpa";
+    if (key.includes("cgpa")) return "cgpa";
+    if (key.includes("attendance")) return "attendance";
+    if (key.includes("activebacklog")) return "activeBacklogs";
+    if (key.includes("totalbacklog")) return "totalBacklogs";
+    if (key.includes("backlog")) return "backlogs";
+    if (key.includes("category")) return "category";
+    if (key.includes("gender")) return "gender";
+    if (key.includes("dob")) return "dob";
+    if (key.includes("domicile") || key.includes("domcile")) {
+      if (key.includes("city")) return "domicileCity";
+      if (key.includes("state")) return "domicileState";
+    }
+    if (key.includes("address")) return "address";
+    if (key.includes("college")) return "college";
+    if (key.includes("class10") || key.includes("10th")) {
+      if (key.includes("passing")) return "tenthPassingYear";
+      if (key.includes("paasing")) return "tenthPassingYear";
+      return "tenthPercentage";
+    }
+    if (key.includes("class12") || key.includes("12th")) {
+      if (key.includes("passing")) return "twelfthPassingYear";
+      if (key.includes("paasing")) return "twelfthPassingYear";
+      return "twelfthPercentage";
+    }
+    if (key.includes("diploma")) return "diplomaPercentage";
+    if (key.includes("graduation")) return "graduationPercentage";
+    if (key.includes("pgstreams") || key.includes("pgstream")) return "pgStreams";
+    if (key.includes("placement")) return "placementStatus";
+    if (key.includes("resume")) return "resumeUrl";
+    
+    const semMatch = key.match(/sem(\d+)/);
+    if (semMatch) {
+      const semNum = semMatch[1];
+      if (key.includes("status") || key.includes("statussem")) return `semester.${semNum}.status`;
+      return `semester.${semNum}.percentage`;
+    }
+
+    return "customFields";
+  }
 
   async function testSheet() {
     const data = await api("/spreadsheets/connection/test", { method: "POST", body: JSON.stringify({ sheetUrl }) });
     setHeaders(data.headers);
     const auto = {};
     data.headers.forEach((header) => {
-      const key = header.toLowerCase().replace(/\s+/g, "");
-      if (key.includes("roll")) auto[header] = "rollNo";
-      else if (key.includes("enrollment")) auto[header] = "enrollmentNo";
-      else if (key.includes("registration")) auto[header] = "registrationNo";
-      else if (key.includes("name")) auto[header] = "name";
-      else if (key.includes("department")) auto[header] = "department";
-      else if (key.includes("course")) auto[header] = "course";
-      else if (key.includes("program")) auto[header] = "program";
-      else if (key.includes("batch")) auto[header] = "batch";
-      else if (key.includes("cgpa")) auto[header] = "cgpa";
-      else if (key.includes("attendance")) auto[header] = "attendance";
-      else auto[header] = "customFields";
+      auto[header] = inferFrontend(header);
     });
     setMapping(auto);
     setMessage(`Preview loaded: ${data.totalRows} rows detected`);
   }
   async function saveConnection() {
-    await api("/spreadsheets/connection", { method: "POST", body: JSON.stringify({ sheetUrl, columnMapping: mapping }) });
-    setMessage("Google Sheet connection saved");
+    if (!newBatch) {
+      setMessage("Please select a batch first");
+      return;
+    }
+    await api("/spreadsheets/connection", { 
+      method: "POST", 
+      body: JSON.stringify({ sheetUrl, batch: newBatch, columnMapping: mapping }) 
+    });
+    setMessage(`Google Sheet connection saved for batch ${newBatch}`);
+    setHeaders([]);
+    setSheetUrl("");
     await loadConnection();
   }
-  async function syncNow() {
-    const data = await api(`/spreadsheets/connection/${connection._id}/sync`, { method: "POST" });
+  async function syncNow(id) {
+    setMessage("Syncing batch, please wait...");
+    const data = await api(`/spreadsheets/connection/${id}/sync`, { method: "POST" });
+    setSyncResult(data);
     setMessage(`Sync completed: ${data.summary.successfulRows} rows saved`);
     loadConnection();
     loadStudents();
+  }
+  async function deleteConnection(id) {
+    if (!window.confirm("Are you sure you want to disconnect this spreadsheet?")) return;
+    try {
+      const data = await api(`/spreadsheets/connection/${id}`, { method: "DELETE" });
+      setMessage(data.message);
+      await loadConnection();
+    } catch (error) {
+      setMessage(error.message || "Failed to delete connection");
+    }
+  }
+
+  async function clearAllStudents() {
+    if (!window.confirm("Are you sure you want to delete ALL students? This cannot be undone!")) return;
+    try {
+      const data = await api("/records/students", { method: "DELETE" });
+      setMessage(data.message);
+      loadStudents();
+    } catch (error) {
+      setMessage(error.message || "Failed to clear students");
+    }
   }
   async function viewStudent(id) {
     setSelected(await api(`/records/students/${id}`));
@@ -581,68 +722,193 @@ function RecordsPage() {
         <button onClick={loadStudents}><RefreshCcw size={17} /> Refresh</button>
       </PageHeader>
       {message && <div className="notice">{message}</div>}
+      {loadError && <ErrorState message={loadError} />}
       <section className="panel source-card">
-        <div className="source-card-header">
-          <div>
-            <h3><FileSpreadsheet size={18} /> Master Data Source</h3>
-            <p>{connection ? connection.sheetUrl : "No Google Sheet connected yet"}</p>
+        <h3><FileSpreadsheet size={18} /> Connected Batch Master Sheets</h3>
+        {connections.length === 0 ? (
+          <p style={{ padding: "10px", color: "#64748b", margin: "0" }}>No Google Sheets connected yet. Add one below.</p>
+        ) : (
+          <div className="connections-container" style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            {connections.map((conn) => {
+              const lastSyncStr = conn.lastSyncAt ? new Date(conn.lastSyncAt).toLocaleString() : "-";
+              const sheetCols = Object.keys(conn.columnMapping || {}).length || 0;
+              return (
+                <div key={conn._id} className="connection-row" style={{ border: "1px solid #e2e8f0", borderRadius: "8px", padding: "15px", background: "#f8fafc" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+                    <div>
+                      <h4 style={{ margin: "0 0 5px 0", display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span className="badge" style={{ background: "#3b82f6", color: "#fff", padding: "2px 8px", borderRadius: "4px", fontSize: "12px", fontWeight: "600" }}>Batch {conn.batch}</span>
+                        {conn.name}
+                      </h4>
+                      <p style={{ margin: "0", fontSize: "12px", color: "#64748b", wordBreak: "break-all" }}>{conn.sheetUrl}</p>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                      <button className="button-sm" onClick={() => syncNow(conn._id)}>Sync Now</button>
+                      <button className="button-sm danger" onClick={() => deleteConnection(conn._id)}>Disconnect</button>
+                      {conn.sheetUrl && <a className="button-link button-sm" href={conn.sheetUrl} target="_blank" rel="noreferrer">Open Sheet</a>}
+                    </div>
+                  </div>
+                  <div className="source-stats" style={{ marginTop: "12px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: "10px" }}>
+                    <Mini label="Status" value={conn.status || "CONNECTED"} />
+                    <Mini label="Mapped Columns" value={sheetCols} />
+                    <Mini label="Total Rows" value={conn.lastSummary?.totalRows || 0} />
+                    <Mini label="New Records" value={conn.lastSummary?.newRecords || 0} />
+                    <Mini label="Updated" value={conn.lastSummary?.updatedRecords || 0} />
+                    <Mini label="Last Sync" value={lastSyncStr} />
+                  </div>
+                </div>
+              );
+            })}
           </div>
-          <div className="last-sync-pill">
-            <span>Last Sync</span>
-            <strong>{lastSync}</strong>
-          </div>
-        </div>
-        <div className="source-stats">
-          <Mini label="Status" value={connection?.status || "Not Connected"} />
-          <Mini label="Columns" value={connectionColumns || "-"} />
-          <Mini label="Rows" value={connection?.lastSummary?.totalRows || 0} />
-          <Mini label="New" value={connection?.lastSummary?.newRecords || 0} />
-          <Mini label="Updated" value={connection?.lastSummary?.updatedRecords || 0} />
-          <Mini label="Conflicts" value={connection?.lastSummary?.conflictCount || 0} />
-        </div>
-        <div className="system-column-note">
+        )}
+
+        <div className="system-column-note" style={{ marginTop: "20px" }}>
           <ShieldCheck size={17} />
           <span>Stuck Off is maintained by Eligibility Flow from drive attendance logic and shown here as Yes or No.</span>
         </div>
-        <div className="sheet-flow">
-          <input placeholder="Paste Google Sheet link" value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} />
-          <button onClick={testSheet}>Test & Preview</button>
-          <button onClick={saveConnection} disabled={!headers.length}>Save Connection</button>
-          <button onClick={syncNow} disabled={!connection}>Sync Now</button>
-          {connection?.sheetUrl && <a className="button-link" href={connection.sheetUrl} target="_blank" rel="noreferrer">Open Google Sheet</a>}
+
+        <div className="connection-form-section" style={{ marginTop: "25px", borderTop: "1px solid #e2e8f0", paddingTop: "20px" }}>
+          <h4 style={{ margin: "0 0 15px 0" }}>Connect New Student Sheet</h4>
+          <div style={{ display: "grid", gap: "14px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "10px" }}>
+              <select 
+                value={newBatch} 
+                onChange={(e) => setNewBatch(e.target.value)} 
+                style={{ height: "40px", fontSize: "14px", padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: "6px", background: "white" }}
+              >
+                {["2024", "2025", "2026", "2027", "2028", "2029", "2030"].map((b) => (
+                  <option key={b} value={b}>Batch {b}</option>
+                ))}
+              </select>
+              <input 
+                style={{ height: "40px", fontSize: "14px", flex: 1 }}
+                placeholder="Paste Google Sheet URL for selected batch" 
+                value={sheetUrl} 
+                onChange={(e) => setSheetUrl(e.target.value)} 
+              />
+            </div>
+            <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button onClick={testSheet} className="soft" style={{ height: "40px", minWidth: "140px" }}>Test & Preview</button>
+              <button onClick={saveConnection} disabled={!headers.length} style={{ height: "40px", minWidth: "150px" }}>Save Connection</button>
+              <button onClick={clearAllStudents} className="danger" style={{ height: "40px", minWidth: "160px" }}>Clear All Students</button>
+            </div>
+          </div>
         </div>
+
         {!!headers.length && (
-          <div className="mapping-grid">
-            {headers.map((header) => (
-              <label key={header}>{header}
-                <select value={mapping[header] || "customFields"} onChange={(e) => setMapping({ ...mapping, [header]: e.target.value })}>
-                  {["customFields", "rollNo", "enrollmentNo", "registrationNo", "name", "email", "phone", "batch", "admissionYear", "passingYear", "department", "course", "program", "branch", "semester", "section", "cgpa", "percentage", "tenthPercentage", "twelfthPercentage", "diplomaPercentage", "activeBacklogs", "totalBacklogs", "attendance", "category", "gender", "placementStatus", "resumeUrl"].map((field) => <option key={field} value={field}>{field}</option>)}
-                </select>
-              </label>
-            ))}
+          <div style={{ marginTop: "20px" }}>
+            <h5 style={{ margin: "0 0 10px 0", fontSize: "14px", fontWeight: "600", color: "#334155" }}>Map Columns for Batch {newBatch}</h5>
+            <div className="mapping-grid">
+              {headers.map((header) => (
+                <label key={header}>{header}
+                  <select value={mapping[header] || "customFields"} onChange={(e) => setMapping({ ...mapping, [header]: e.target.value })}>
+                    {[
+                      "customFields", 
+                      "grNo", "universityId", 
+                      "rollNo", "enrollmentNo", "registrationNo", 
+                      "name", "email", "phone", "fatherContactNo", 
+                      "batch", "admissionYear", "passingYear", 
+                      "department", "course", "program", "branch", "specialization", 
+                      "semester", "section", 
+                      "cgpa", "percentage", 
+                      "tenthPercentage", "tenthPassingYear", 
+                      "twelfthPercentage", "twelfthPassingYear", 
+                      "diplomaPercentage", "graduationPercentage", "pgStreams",
+                      ...Array.from({length:8}, (_,i) => `semester.${i+1}.percentage`),
+                      ...Array.from({length:8}, (_,i) => `semester.${i+1}.status`),
+                      "activeBacklogs", "totalBacklogs", "attendance", 
+                      "category", "gender", "dob", "domicileCity", "domicileState", "address", "college",
+                      "placementStatus", "resumeUrl"
+                    ].map((field) => <option key={field} value={field}>{field}</option>)}
+                  </select>
+                </label>
+              ))}
+            </div>
           </div>
         )}
       </section>
       <FilterBar filters={filters} setFilters={setFilters} />
-      <DataTable
-        columns={["Roll No", "Name", "Mail", "Phone", "Department", "Course", "CGPA", "Attendance", "Batch", "Stuck Off", "Actions"]}
-        rows={students.items.map((s) => {
-          const stuckOff = s.driveRestriction?.status === "STUCK_OFF";
-          return [
-            s.rollNo,
-            s.name,
-            s.email || "-",
-            s.phone || "-",
-            s.department,
-            s.course || "-",
-            s.cgpa,
-            `${s.attendance}%`,
-            s.batch || "-",
-            <span className={`status ${stuckOff ? "rejected" : "approved"}`}>{stuckOff ? "Yes" : "No"}</span>,
-            <button onClick={() => viewStudent(s._id)}><Eye size={16} /> View</button>
-          ];
-        })}
-      />
+      <section className="table-wrap" style={{ overflowX: "auto", width: "100%" }}>
+        <table style={{ width: "max-content", borderCollapse: "collapse", minWidth: "100%" }}>
+          <thead>
+            <tr style={{ background: "#f8fafc" }}>
+              {[
+                "GR No", "Roll No", "Enrollment No", "University ID", "Status", "Pass Out Year", "Name", "Gender", "DOB", "Mail", 
+                "Phone", "Father's Phone", "Domicile City", "Domicile State", "Address", "College", "Branch", "Specialization", "Program", "Course", 
+                "Semester", "CGPA", "Attendance", "10th %", "10th Year", "12th %", "12th Year", "Graduation %", "PG Streams", 
+                "Sem 1 %", "Sem 2 %", "Sem 3 %", "Sem 4 %", "Sem 5 %", "Sem 6 %", "Sem 7 %", "Sem 8 %", 
+                "Backlogs", "Resume", "Stuck Off", "Actions"
+              ].map((col, i) => (
+                <th key={i} style={{ 
+                  padding: "10px 12px", 
+                  textAlign: "left", 
+                  borderBottom: "2px solid #e2e8f0", 
+                  fontSize: "12px", 
+                  fontWeight: "700", 
+                  color: "#334155",
+                  whiteSpace: "nowrap"
+                }}>{col}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {students.items.map((s, idx) => {
+              const stuckOff = s.driveRestriction?.status === "STUCK_OFF" || ["stuck off", "struck off", "stuck_off", "struck_off"].includes(String(s.status || "").toLowerCase());
+              return (
+                <tr key={s._id || idx} style={{ borderBottom: "1px solid #f1f5f9", background: idx % 2 === 0 ? "#ffffff" : "#f8fafc" }}>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.grNo || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.rollNo}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.enrollmentNo || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.universityId || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.status || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.passingYear || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.name}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.gender || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.dob ? new Date(s.dob).toLocaleDateString() : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.email || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.phone || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.fatherContactNo || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.domicileCity || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.domicileState || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.address || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.college || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.branch || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.specialization || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.program || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.course || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.semester}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{formatCgpa(s.cgpa)}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.attendance}%</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.tenthPercentage != null ? s.tenthPercentage : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.tenthPassingYear || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.twelfthPercentage != null ? s.twelfthPercentage : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.twelfthPassingYear || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.graduationPercentage != null ? s.graduationPercentage : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.pgStreams || "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.semesters?.["1"]?.percentage != null ? `${s.semesters["1"].percentage}%` : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.semesters?.["2"]?.percentage != null ? `${s.semesters["2"].percentage}%` : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.semesters?.["3"]?.percentage != null ? `${s.semesters["3"].percentage}%` : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.semesters?.["4"]?.percentage != null ? `${s.semesters["4"].percentage}%` : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.semesters?.["5"]?.percentage != null ? `${s.semesters["5"].percentage}%` : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.semesters?.["6"]?.percentage != null ? `${s.semesters["6"].percentage}%` : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.semesters?.["7"]?.percentage != null ? `${s.semesters["7"].percentage}%` : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.semesters?.["8"]?.percentage != null ? `${s.semesters["8"].percentage}%` : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>{s.backlogs != null ? s.backlogs : "-"}</td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>
+                    {s.resumeUrl ? <a href={s.resumeUrl} target="_blank" rel="noreferrer" style={{ color: "#3b82f6", textDecoration: "underline" }}>View</a> : "-"}
+                  </td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>
+                    <span className={`status ${stuckOff ? "rejected" : "approved"}`}>{stuckOff ? "Yes" : "No"}</span>
+                  </td>
+                  <td style={{ padding: "10px 12px", fontSize: "13px", whiteSpace: "nowrap" }}>
+                    <button onClick={() => viewStudent(s._id)}><Eye size={16} /> View</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
       <div className="pagination">
         <button disabled={filters.page <= 1} onClick={() => setFilters({ ...filters, page: filters.page - 1 })}>Previous</button>
         <span>{students.total} records - Page {filters.page} of {students.pages || 1}</span>
@@ -1007,10 +1273,14 @@ function ProfilePage({ user }) {
       {message && <div className="notice">{message}</div>}
       <section className="panel profile-card">
         <div className="profile-photo-wrap">
-          <img className="profile-photo" src={assetUrl(form.profileImage) || "/logo.png"} alt="Profile" />
+          <div className="profile-photo-frame">
+            <img className="profile-photo" src={assetUrl(form.profileImage) || "/logo.png"} alt="Profile" />
+          </div>
           <div className="profile-summary">
-            <h3>{form.name || "User Profile"}</h3>
-            <span>{user.role === "HOD" ? "Administration Profile" : "List Maker Profile"}</span>
+            <div>
+              <h3>{form.name || "User Profile"}</h3>
+              <span>{user.role === "HOD" ? "Administration Profile" : "List Maker Profile"}</span>
+            </div>
             <p>{form.email}</p>
           </div>
           <label className="upload-photo-button">Upload Photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={changePhoto} /></label>
@@ -1026,6 +1296,745 @@ function ProfilePage({ user }) {
           <button><Save size={17} /> Save Profile</button>
         </form>
       </section>
+    </>
+  );
+}
+
+function MasterDataReadOnlyPage() {
+  const [students, setStudents] = useState({ items: [], total: 0, page: 1, pages: 1 });
+  const [filters, setFilters] = useState({ search: "", batch: "", department: "", course: "", program: "", semester: "", page: 1, limit: 50 });
+  const [selected, setSelected] = useState(null);
+  const [error, setError] = useState("");
+
+  const query = useMemo(() => new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== "")).toString(), [filters]);
+
+  async function loadStudents() {
+    setError("");
+    try {
+      setStudents(await api(`/records/students?${query}`));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  useEffect(() => { loadStudents(); }, [query]);
+
+  async function viewStudent(id) {
+    setSelected(await api(`/records/students/${id}`));
+  }
+
+  return (
+    <>
+      <PageHeader eyebrow="Master Data" title="Master Data (Read Only)" subtitle="View student master records; no edits allowed" />
+      <FilterBar filters={filters} setFilters={setFilters} />
+      {error && <ErrorState message={error} />}
+      <DataTable
+        columns={["Roll No", "Name", "Mail", "Phone", "Department", "Course", "CGPA", "Attendance", "Batch", "Stuck Off", "Actions"]}
+        rows={students.items.map((s) => {
+          const stuckOff = s.driveRestriction?.status === "STUCK_OFF" || ["stuck off", "struck off", "stuck_off", "struck_off"].includes(String(s.status || "").toLowerCase());
+          return [
+            s.rollNo,
+            s.name,
+            s.email || "-",
+            s.phone || "-",
+            s.department,
+            s.course || "-",
+            formatCgpa(s.cgpa),
+            `${s.attendance}%`,
+            s.batch || "-",
+            <span className={`status ${stuckOff ? "rejected" : "approved"}`}>{stuckOff ? "Yes" : "No"}</span>,
+            <button onClick={() => viewStudent(s._id)}><Eye size={16} /> View</button>
+          ];
+        })}
+      />
+      <div className="pagination">
+        <button disabled={filters.page <= 1} onClick={() => setFilters({ ...filters, page: filters.page - 1 })}>Previous</button>
+        <span>{students.total} records - Page {filters.page} of {students.pages || 1}</span>
+        <button disabled={filters.page >= students.pages} onClick={() => setFilters({ ...filters, page: filters.page + 1 })}>Next</button>
+      </div>
+      {selected && <StudentDrawer payload={selected} close={() => setSelected(null)} readOnly />}
+    </>
+  );
+}
+
+function EligibilityListsPage({ setSelectedList, setActive, isHod = false }) {
+  const [lists, setLists] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadLists() {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await api("/eligibility");
+      setLists(data.items || []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { loadLists(); }, []);
+
+  return (
+    <>
+      <PageHeader eyebrow="Eligibility" title="Eligibility Lists" subtitle="Create and manage eligibility lists for drives">
+        {!isHod && <button onClick={() => setActive("create-eligibility")}><ListChecks size={17} /> Create New List</button>}
+        <button onClick={loadLists}><RefreshCcw size={17} /> Refresh</button>
+      </PageHeader>
+      {error && <div className="notice error">{error}</div>}
+      {loading && <div className="notice">Loading...</div>}
+      <section className="panel" style={{ overflow: "visible" }}>
+        {!lists.length ? <EmptyState message="No eligibility lists created yet" /> : (
+          <DataTable
+            className="eligible-students-table"
+            columns={["List Name", "Company / Drive", "Total Synced", "Eligible Count", "Not Eligible", "Status", "Created By", "Action"]}
+            rows={lists.map(list => [
+              <strong>{list.name}</strong>,
+              list.companyName ? `${list.companyName} ${list.jobRole ? `(${list.jobRole})` : ""}` : "-",
+              list.eligibilityBreakdown?.totalChecked || 0,
+              <span style={{ color: "var(--green)", fontWeight: "bold" }}>{list.eligibilityBreakdown?.totalEligible || 0}</span>,
+              <span style={{ color: "var(--red)", fontWeight: "bold" }}>{list.eligibilityBreakdown?.totalNotEligible || 0}</span>,
+              <span className={`status ${list.status === "FINALIZED" ? "approved" : "pending"}`}>{list.status}</span>,
+              list.createdBy?.name || list.createdBy?.email || "Unknown",
+              <button 
+                className="soft" 
+                onClick={() => { setSelectedList(list); setActive("view-eligibility"); }}
+                style={{ minHeight: "32px", padding: "0 10px" }}
+              >
+                <Eye size={14} /> View Details
+              </button>
+            ])}
+          />
+        )}
+      </section>
+    </>
+  );
+}
+
+function CreateEligibilityListPage({ onComplete }) {
+  const [form, setForm] = useState({
+    name: "",
+    description: "",
+    cgpaMin: "",
+    tenthPercentageMin: "",
+    twelfthPercentageMin: "",
+    courses: [],
+    departments: [],
+    batches: [],
+    program: "",
+    attendanceMin: "",
+    allowStuckOff: false
+  });
+  const [options, setOptions] = useState({ courses: [], departments: [], batches: [], programs: [] });
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [optionsLoading, setOptionsLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadOptions() {
+      try {
+        const data = await api("/eligibility/options/master-data");
+        setOptions(data);
+      } catch (err) {
+        console.error("Failed to load options:", err);
+      } finally {
+        setOptionsLoading(false);
+      }
+    }
+    loadOptions();
+  }, []);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setLoading(true);
+    setMessage("");
+    try {
+      const payload = {
+        name: form.name.trim(),
+        description: form.description.trim(),
+        courses: form.courses,
+        departments: form.departments,
+        batches: form.batches,
+        program: form.program,
+        allowStuckOff: form.allowStuckOff
+      };
+      ["cgpaMin", "tenthPercentageMin", "twelfthPercentageMin", "attendanceMin"].forEach((field) => {
+        if (form[field] !== "") payload[field] = Number(form[field]);
+      });
+      const result = await api("/eligibility", { method: "POST", body: JSON.stringify(payload) });
+      setMessage("Eligibility list created successfully");
+      onComplete(result);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const handleMultiSelect = (field, value) => {
+    setForm(prev => ({
+      ...prev,
+      [field]: prev[field].includes(value)
+        ? prev[field].filter(v => v !== value)
+        : [...prev[field], value]
+    }));
+  };
+
+  return (
+    <>
+      <PageHeader eyebrow="Eligibility" title="Create Eligibility List" subtitle="Create from synced master data fields">
+        <button className="soft" onClick={() => onComplete(null)}><ChevronLeft size={17} /> Back</button>
+      </PageHeader>
+      {message && <div className={message.toLowerCase().includes("success") ? "notice" : "notice error"}>{message}</div>}
+      <section className="panel eligibility-form-panel">
+        {optionsLoading ? (
+          <div className="notice">Loading options...</div>
+        ) : (
+          <form className="eligibility-form" onSubmit={handleSubmit}>
+            <div className="form-section">
+              <h3>List Information</h3>
+              <div className="form-row">
+                <div className="form-group">
+                  <label htmlFor="listName">List Name</label>
+                  <input id="listName" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="description">Description</label>
+                  <textarea id="description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} />
+                </div>
+              </div>
+            </div>
+
+            <div className="form-section">
+              <h3>Master Data Criteria</h3>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Program</label>
+                  <select value={form.program} onChange={(e) => setForm({ ...form, program: e.target.value })}>
+                    <option value="">All Programs</option>
+                    {options.programs.map(program => <option key={program} value={program}>{program}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="form-row criteria-picker-row">
+                <div className="form-group multi-select-group">
+                  <label>Course / Degree</label>
+                  <div className="multi-select-container course-options">
+                    {options.courses.map(course => (
+                      <label key={course} className="multi-select-item">
+                        <input
+                          type="checkbox"
+                          checked={form.courses.includes(course)}
+                          onChange={() => handleMultiSelect("courses", course)}
+                        />
+                        <span>{course}</span>
+                      </label>
+                    ))}
+                    {options.courses.length === 0 && <span className="subtle">No courses in master data</span>}
+                  </div>
+                </div>
+                <div className="form-group multi-select-group">
+                  <label>Department / Branch</label>
+                  <div className="multi-select-container department-options">
+                    {options.departments.map(dept => (
+                      <label key={dept} className="multi-select-item">
+                        <input
+                          type="checkbox"
+                          checked={form.departments.includes(dept)}
+                          onChange={() => handleMultiSelect("departments", dept)}
+                        />
+                        <span>{dept}</span>
+                      </label>
+                    ))}
+                    {options.departments.length === 0 && <span className="subtle">No departments in master data</span>}
+                  </div>
+                </div>
+                <div className="form-group multi-select-group">
+                  <label>Batches</label>
+                  <div className="multi-select-container">
+                    {options.batches.map(batch => (
+                      <label key={batch} className="multi-select-item">
+                        <input
+                          type="checkbox"
+                          checked={form.batches.includes(batch)}
+                          onChange={() => handleMultiSelect("batches", batch)}
+                        />
+                        <span>{batch}</span>
+                      </label>
+                    ))}
+                    {options.batches.length === 0 && <span className="subtle">No batches in master data</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="form-section">
+              <h3>Optional Filters</h3>
+              <div className="form-row">
+                <div className="form-group">
+                  <label htmlFor="cgpaMin">CGPA Min</label>
+                  <input id="cgpaMin" type="number" step="0.1" min="0" max="10" value={form.cgpaMin} onChange={(e) => setForm({ ...form, cgpaMin: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="tenthPercentageMin">10th Marks % Min</label>
+                  <input id="tenthPercentageMin" type="number" step="0.1" min="0" max="100" value={form.tenthPercentageMin} onChange={(e) => setForm({ ...form, tenthPercentageMin: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="twelfthPercentageMin">12th Marks % Min</label>
+                  <input id="twelfthPercentageMin" type="number" step="0.1" min="0" max="100" value={form.twelfthPercentageMin} onChange={(e) => setForm({ ...form, twelfthPercentageMin: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label>Attendance % Min</label>
+                  <input type="number" min="0" max="100" value={form.attendanceMin} onChange={(e) => setForm({ ...form, attendanceMin: e.target.value })} />
+                </div>
+                <div className="form-group checkbox-group">
+                  <label className="checkbox-label">
+                    <input type="checkbox" checked={form.allowStuckOff} onChange={(e) => setForm({ ...form, allowStuckOff: e.target.checked })} />
+                    Allow Stuck-Off Students
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="form-submit-row">
+              <button type="submit" disabled={loading}><ListChecks size={17} /> {loading ? "Creating List..." : "Create Eligibility List"}</button>
+            </div>
+          </form>
+        )}
+      </section>
+    </>
+  );
+}
+
+function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
+  const [list, setList] = useState(initialList);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [activeSubTab, setActiveSubTab] = useState("all");
+  const [searchTerm, setSearchTerm] = useState("");
+
+  async function loadList() {
+    setLoading(true);
+    try {
+      const data = await api(`/eligibility/${initialList._id}`);
+      setList(data);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function finalizeList() {
+    setLoading(true);
+    try {
+      const data = await api(`/eligibility/${initialList._id}/finalize`, { method: "PATCH" });
+      setList(data);
+      setMessage("List finalized successfully");
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function exportList() {
+    const token = localStorage.getItem("eligibleFlowToken");
+    const response = await fetch(`${API_URL}/eligibility/${initialList._id}/export`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+    if (!response.ok) throw new Error("Export failed");
+    const blob = await response.blob();
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = `${list.name.replace(/[^a-z0-9]/gi, "_")}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(href);
+  }
+
+  useEffect(() => { loadList(); }, [initialList._id]);
+
+  function categorizeReasons(reasonsMap) {
+    const categories = {
+      "Less CGPA": 0,
+      "Backlogs Limit Exceeded": 0,
+      "Stuck Off": 0,
+      "Less Attendance": 0,
+      "Restricted Course/Branch/Batch": 0,
+      "Other Reasons": 0
+    };
+    
+    if (!reasonsMap) return categories;
+    
+    const entries = reasonsMap instanceof Map ? reasonsMap.entries() : Object.entries(reasonsMap);
+    for (const [reason, count] of entries) {
+      const r = reason.toLowerCase();
+      if (r.includes("cgpa")) {
+        categories["Less CGPA"] += count;
+      } else if (r.includes("backlog")) {
+        categories["Backlogs Limit Exceeded"] += count;
+      } else if (r.includes("stuck") || r.includes("struck")) {
+        categories["Stuck Off"] += count;
+      } else if (r.includes("attendance")) {
+        categories["Less Attendance"] += count;
+      } else if (r.includes("eligible") || r.includes("restricted") || r.includes("course") || r.includes("branch") || r.includes("batch") || r.includes("department") || r.includes("program")) {
+        categories["Restricted Course/Branch/Batch"] += count;
+      } else {
+        categories["Other Reasons"] += count;
+      }
+    }
+    return categories;
+  }
+
+  function getDisplayReasons(student) {
+    const isElig = student.isEligible !== undefined ? student.isEligible : (student.eligibilityStatus === "Eligible");
+    let list = student.reasons || [];
+    if (!isElig && (list.length === 0 || list.includes("Meets all eligibility criteria") || list.includes("Meets all criteria"))) {
+      return ["Student was Stuck Off at list creation time"];
+    }
+    return list;
+  }
+
+  const categories = categorizeReasons(list.eligibilityBreakdown?.reasons);
+  const regSummary = list.registrationSummary || { registered: 0, notRegistered: 0, total: 0, present: 0, absent: 0, pendingAttendance: 0 };
+
+  const totalChecked = list.eligibilityBreakdown?.totalChecked || 0;
+  const totalEligible = list.eligibilityBreakdown?.totalEligible || 0;
+  const totalNotEligible = list.eligibilityBreakdown?.totalNotEligible || 0;
+  
+  const eligiblePct = totalChecked ? Math.round((totalEligible / totalChecked) * 100) : 0;
+  const regPct = regSummary.total ? Math.round((regSummary.registered / regSummary.total) * 100) : 0;
+
+  const attendedCount = (regSummary.present || 0) + (regSummary.absent || 0) + (regSummary.pendingAttendance || 0);
+  const presentPct = attendedCount ? Math.round((regSummary.present / attendedCount) * 100) : 0;
+  const absentPct = attendedCount ? Math.round((regSummary.absent / attendedCount) * 100) : 0;
+  const pendingPct = attendedCount ? Math.round((regSummary.pendingAttendance / attendedCount) * 100) : 0;
+
+  const attendanceConicGradient = `conic-gradient(var(--green) ${presentPct}%, var(--red) ${presentPct}% ${presentPct + absentPct}%, var(--yellow) ${presentPct + absentPct}% 100%)`;
+
+  const searchTermClean = searchTerm.trim().toLowerCase();
+
+  const allStudentsCombined = useMemo(() => {
+    const eligibleMapped = (list.eligibleStudents || []).map(s => ({
+      ...s,
+      isEligible: true,
+      eligibilityStatus: "Eligible",
+      reasons: ["Meets all criteria"]
+    }));
+    const ineligibleMapped = (list.notEligibleStudents || []).map(s => ({
+      ...s,
+      isEligible: false,
+      eligibilityStatus: "Not Eligible",
+      registrationStatus: "N/A"
+    }));
+    
+    const combined = [...eligibleMapped, ...ineligibleMapped];
+    if (!searchTermClean) return combined;
+    return combined.filter(s => 
+      String(s.name || "").toLowerCase().includes(searchTermClean) ||
+      String(s.rollNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.email || "").toLowerCase().includes(searchTermClean) ||
+      String(s.department || "").toLowerCase().includes(searchTermClean) ||
+      String(s.course || "").toLowerCase().includes(searchTermClean)
+    );
+  }, [list.eligibleStudents, list.notEligibleStudents, searchTermClean]);
+
+  const filteredEligible = useMemo(() => {
+    const eligibleMapped = (list.eligibleStudents || []).map(s => ({
+      ...s,
+      isEligible: true,
+      eligibilityStatus: "Eligible"
+    }));
+    if (!searchTermClean) return eligibleMapped;
+    return eligibleMapped.filter(s => 
+      String(s.name || "").toLowerCase().includes(searchTermClean) ||
+      String(s.rollNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.email || "").toLowerCase().includes(searchTermClean) ||
+      String(s.department || "").toLowerCase().includes(searchTermClean) ||
+      String(s.course || "").toLowerCase().includes(searchTermClean)
+    );
+  }, [list.eligibleStudents, searchTermClean]);
+
+  const filteredNotEligible = useMemo(() => {
+    const ineligibleMapped = (list.notEligibleStudents || []).map(s => ({
+      ...s,
+      isEligible: false,
+      eligibilityStatus: "Not Eligible"
+    }));
+    if (!searchTermClean) return ineligibleMapped;
+    return ineligibleMapped.filter(s => 
+      String(s.name || "").toLowerCase().includes(searchTermClean) ||
+      String(s.rollNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.email || "").toLowerCase().includes(searchTermClean) ||
+      String(s.department || "").toLowerCase().includes(searchTermClean) ||
+      String(s.course || "").toLowerCase().includes(searchTermClean)
+    );
+  }, [list.notEligibleStudents, searchTermClean]);
+
+  const allColumns = isHod
+    ? ["Roll No", "Name", "Email", "Department", "CGPA", "Eligibility Status", "Details / Reason"]
+    : ["Roll No", "Name", "Email", "Department", "CGPA", "Eligibility Status", "Registration Status", "Details / Reason"];
+
+  const eligibleColumns = isHod
+    ? ["Roll No", "Name", "Email", "Department", "Course", "Batch", "CGPA"]
+    : ["Roll No", "Name", "Email", "Department", "Course", "Batch", "CGPA", "Registration Status"];
+
+  return (
+    <>
+      <PageHeader eyebrow="Eligibility" title={list.name} subtitle={list.description || "No description"}>
+        <button className="soft" onClick={back}><ChevronLeft size={17} /> Back to Lists</button>
+        <button className="soft" onClick={exportList}><FileDown size={17} /> Export Excel</button>
+        {!isHod && list.status === "DRAFT" && <button onClick={finalizeList} disabled={loading}><Save size={17} /> Finalize List</button>}
+      </PageHeader>
+      {message && <div className={message.toLowerCase().includes("success") ? "notice" : "notice error"}>{message}</div>}
+      
+      <div style={{ background: "white", padding: "14px", border: "1px solid var(--line)", borderRadius: "8px", marginTop: "14px", fontSize: "14px", textAlign: "left" }}>
+        <strong>List Info:</strong> Created by <strong>{list.createdBy?.name || list.createdBy?.email || "Unknown"}</strong>.
+      </div>
+
+      {/* Advanced Rate Analytics Section */}
+      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", marginTop: "20px" }}>
+        {/* Eligibility Donut */}
+        <div className="panel chart-panel" style={{ margin: 0, padding: "20px", display: "grid", gap: "16px", borderTop: "4px solid var(--green)" }}>
+          <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "var(--ink)", textAlign: "left" }}>Eligibility Rate</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "16px", alignItems: "center" }}>
+            <div className="donut-chart" style={{ width: "110px", height: "110px", background: `conic-gradient(var(--green) ${eligiblePct}%, var(--red) ${eligiblePct}% 100%)` }}>
+              <span style={{ fontSize: "20px", fontWeight: "900" }}>{eligiblePct}%</span>
+              <small style={{ fontSize: "9px", fontWeight: "800", color: "var(--muted)", textTransform: "uppercase" }}>Eligible</small>
+            </div>
+            <div style={{ display: "grid", gap: "8px", fontSize: "13px", textAlign: "left" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--line)", paddingBottom: "4px" }}>
+                <span style={{ color: "var(--muted)" }}>Total Checked</span>
+                <strong>{totalChecked}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", color: "var(--green)" }}>
+                <span>Eligible</span>
+                <strong>{totalEligible}</strong>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", color: "var(--red)" }}>
+                <span>Ineligible</span>
+                <strong>{totalNotEligible}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Registration Donut */}
+        {!isHod && list.companyName && (
+          <div className="panel chart-panel" style={{ margin: 0, padding: "20px", display: "grid", gap: "16px", borderTop: "4px solid var(--blue)" }}>
+            <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "var(--ink)", textAlign: "left" }}>Registration Rate</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "16px", alignItems: "center" }}>
+              <div className="donut-chart" style={{ width: "110px", height: "110px", background: `conic-gradient(var(--blue) ${regPct}%, #e2e8f0 ${regPct}% 100%)` }}>
+                <span style={{ fontSize: "20px", fontWeight: "900" }}>{regPct}%</span>
+                <small style={{ fontSize: "9px", fontWeight: "800", color: "var(--muted)", textTransform: "uppercase" }}>Registered</small>
+              </div>
+              <div style={{ display: "grid", gap: "8px", fontSize: "13px", textAlign: "left" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--line)", paddingBottom: "4px" }}>
+                  <span style={{ color: "var(--muted)" }}>Eligible Pool</span>
+                  <strong>{regSummary.total}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "var(--blue)" }}>
+                  <span>Registered</span>
+                  <strong>{regSummary.registered}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "var(--muted)" }}>
+                  <span>Unregistered</span>
+                  <strong>{regSummary.notRegistered}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Attendance Donut */}
+        {!isHod && list.companyName && regSummary.registered > 0 && (
+          <div className="panel chart-panel" style={{ margin: 0, padding: "20px", display: "grid", gap: "16px", borderTop: "4px solid var(--orange)" }}>
+            <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "var(--ink)", textAlign: "left" }}>Attendance Rate</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "16px", alignItems: "center" }}>
+              <div className="donut-chart" style={{ width: "110px", height: "110px", background: attendanceConicGradient }}>
+                <span style={{ fontSize: "20px", fontWeight: "900" }}>{presentPct}%</span>
+                <small style={{ fontSize: "9px", fontWeight: "800", color: "var(--muted)", textTransform: "uppercase" }}>Present</small>
+              </div>
+              <div style={{ display: "grid", gap: "8px", fontSize: "13px", textAlign: "left" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--line)", paddingBottom: "4px" }}>
+                  <span style={{ color: "var(--muted)" }}>Registered Pool</span>
+                  <strong>{regSummary.registered}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "var(--green)" }}>
+                  <span>Present</span>
+                  <strong>{regSummary.present}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "var(--red)" }}>
+                  <span>Absent</span>
+                  <strong>{regSummary.absent}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "var(--yellow)" }}>
+                  <span>Pending</span>
+                  <strong>{regSummary.pendingAttendance}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {list.eligibilityBreakdown?.totalNotEligible > 0 && (
+        <section className="panel" style={{ marginTop: "20px" }}>
+          <h3 style={{ margin: "0 0 15px 0", fontSize: "18px", textAlign: "left" }}>Ineligibility Breakdown (Reasons)</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "15px" }}>
+            {Object.entries(categories).map(([category, count]) => {
+              if (count === 0) return null;
+              return (
+                <div key={category} className="mini" style={{ 
+                  borderTop: `4px solid ${
+                    category === "Less CGPA" ? "var(--blue)" :
+                    category === "Backlogs Limit Exceeded" ? "var(--orange)" :
+                    category === "Stuck Off" ? "var(--red)" :
+                    category === "Less Attendance" ? "var(--yellow)" : "var(--muted)"
+                  }`,
+                  padding: "12px",
+                  textAlign: "center"
+                }}>
+                  <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--muted)" }}>{category}</span>
+                  <strong style={{ fontSize: "24px", color: "var(--ink)", margin: "4px 0", display: "block" }}>{count}</strong>
+                  <span style={{ fontSize: "11px", textTransform: "none", color: "#64748b" }}>students failed</span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Tabs and Search Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", margin: "25px 0 12px 0", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <button 
+            className={activeSubTab === "all" ? "button" : "soft"} 
+            onClick={() => setActiveSubTab("all")}
+            style={{ minHeight: "38px", paddingInline: "14px" }}
+          >
+            Sheet Preview ({allStudentsCombined.length} / {totalChecked})
+          </button>
+          <button 
+            className={activeSubTab === "eligible" ? "button" : "soft"} 
+            onClick={() => setActiveSubTab("eligible")}
+            style={{ minHeight: "38px", paddingInline: "14px" }}
+          >
+            Eligible ({list.eligibleStudents?.length || 0})
+          </button>
+          <button 
+            className={activeSubTab === "not-eligible" ? "button" : "soft"} 
+            onClick={() => setActiveSubTab("not-eligible")}
+            style={{ minHeight: "38px", paddingInline: "14px" }}
+          >
+            Not Eligible ({list.notEligibleStudents?.length || 0})
+          </button>
+        </div>
+        <label className="searchbox" style={{ width: "300px", margin: 0 }} aria-label="Search student">
+          <Search size={18} />
+          <input 
+            value={searchTerm} 
+            onChange={(e) => setSearchTerm(e.target.value)} 
+            placeholder="Search by name, roll, dept..." 
+            style={{ minHeight: "38px", fontSize: "14px" }}
+          />
+        </label>
+      </div>
+
+      {activeSubTab === "all" && (
+        <section className="panel" style={{ marginTop: "10px" }}>
+          <h3 style={{ textAlign: "left" }}>Sheet Preview (All Checked Students)</h3>
+          {!allStudentsCombined.length ? <EmptyState message="No students match the search term" /> : (
+            <DataTable
+              className="eligible-students-table"
+              columns={allColumns}
+              rows={allStudentsCombined.map(student => {
+                const rowData = [
+                  student.rollNo || "-",
+                  student.name,
+                  student.email || "-",
+                  student.department || "-",
+                  formatCgpa(student.cgpa),
+                  <span className={`status ${student.isEligible ? "approved" : "rejected"}`}>{student.eligibilityStatus}</span>
+                ];
+                if (!isHod) {
+                  rowData.push(
+                    <span className={`status ${student.registrationStatus === "REGISTERED" ? "approved" : student.registrationStatus === "NOT_REGISTERED" ? "rejected" : ""}`}>{student.registrationStatus?.replaceAll("_", " ") || "N/A"}</span>
+                  );
+                }
+                rowData.push(
+                  student.isEligible ? (
+                    <span style={{ color: "var(--muted)" }}>Meets all criteria</span>
+                  ) : (
+                    <ul style={{ margin: 0, paddingLeft: "14px", fontSize: "11px", color: "var(--red)", textAlign: "left" }}>
+                      {getDisplayReasons(student).map((reason, rIdx) => <li key={rIdx}>{reason}</li>)}
+                    </ul>
+                  )
+                );
+                return rowData;
+              })}
+            />
+          )}
+        </section>
+      )}
+
+      {activeSubTab === "eligible" && (
+        <section className="panel" style={{ marginTop: "10px" }}>
+          <h3 style={{ textAlign: "left" }}>Eligible Students</h3>
+          {!filteredEligible.length ? <EmptyState message="No eligible students found matching the search" /> : (
+            <DataTable
+              className="eligible-students-table"
+              columns={eligibleColumns}
+              rows={filteredEligible.map(student => {
+                const rowData = [
+                  student.rollNo || "-",
+                  student.name,
+                  student.email || "-",
+                  student.department || "-",
+                  student.course || "-",
+                  student.batch || "-",
+                  formatCgpa(student.cgpa)
+                ];
+                if (!isHod) {
+                  rowData.push(
+                    <span className={`status ${student.registrationStatus === "REGISTERED" ? "approved" : "rejected"}`}>{student.registrationStatus?.replaceAll("_", " ") || "NOT REGISTERED"}</span>
+                  );
+                }
+                return rowData;
+              })}
+            />
+          )}
+        </section>
+      )}
+
+      {activeSubTab === "not-eligible" && (
+        <section className="panel" style={{ marginTop: "10px" }}>
+          <h3 style={{ textAlign: "left" }}>Not Eligible Students</h3>
+          {!filteredNotEligible.length ? <EmptyState message="No ineligible students found matching the search" /> : (
+            <DataTable
+              className="eligible-students-table"
+              columns={["Roll No", "Name", "Email", "Department", "Course", "Batch", "CGPA", "Reason(s)"]}
+              rows={filteredNotEligible.map(student => [
+                student.rollNo || "-",
+                student.name,
+                student.email || "-",
+                student.department || "-",
+                student.course || "-",
+                student.batch || "-",
+                formatCgpa(student.cgpa),
+                <ul style={{ margin: 0, paddingLeft: "14px", fontSize: "12px", color: "var(--red)", textAlign: "left" }}>
+                  {getDisplayReasons(student).map((reason, rIdx) => <li key={rIdx}>{reason}</li>)}
+                </ul>
+              ])}
+            />
+          )}
+        </section>
+      )}
     </>
   );
 }
@@ -1056,9 +2065,9 @@ function StuckOffReport({ items }) {
   );
 }
 
-function DataTable({ columns, rows }) {
+function DataTable({ columns, rows, className = "" }) {
   return (
-    <section className="table-wrap">
+    <section className={`table-wrap ${className}`}>
       <table>
         <thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
         <tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
@@ -1068,12 +2077,27 @@ function DataTable({ columns, rows }) {
 }
 
 function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }) {
+  const { user } = useAuth();
+  const isHod = user?.role === "HOD";
   const student = payload.student || payload;
+  const [currentStudent, setCurrentStudent] = useState(student);
   const summary = payload.driveSummary || {};
-  const [status, setStatus] = useState(student.driveRestriction?.status || summary.stuckOffStatus || "CLEAR");
-  const [reason, setReason] = useState(student.driveRestriction?.reason || summary.stuckOffReason || "");
+  const isStuckOff = currentStudent.driveRestriction?.status === "STUCK_OFF" || 
+                     ["stuck off", "struck off", "stuck_off", "struck_off"].includes(String(currentStudent.status || "").toLowerCase()) || 
+                     summary.stuckOffStatus === "STUCK_OFF";
+  const [status, setStatus] = useState(isStuckOff ? "STUCK_OFF" : "CLEAR");
+  const [reason, setReason] = useState(
+    currentStudent.driveRestriction?.reason || 
+    summary.stuckOffReason || 
+    (isStuckOff ? "Stuck off from master sheet status column." : "")
+  );
   const [message, setMessage] = useState("");
   const [driveSearch, setDriveSearch] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState({});
+  const [editReason, setEditReason] = useState("");
+  const [editError, setEditError] = useState("");
+
   const stuckOff = status === "STUCK_OFF";
   const filteredDriveRows = (summary.driveRows || []).filter((row) => {
     const text = [
@@ -1093,16 +2117,39 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
     setMessage(status === "CLEAR" ? "Student status changed to Active." : "Student marked as Stuck Off.");
   }
 
+  async function handleSaveEdit(event) {
+    event.preventDefault();
+    if (editReason.trim().length < 3) {
+      setEditError("Please enter a valid edit reason (at least 3 characters)");
+      return;
+    }
+    setEditError("");
+    try {
+      const updated = await api(`/records/students/${currentStudent._id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          updates: editForm,
+          reason: editReason
+        })
+      });
+      setCurrentStudent(updated);
+      setIsEditing(false);
+      setMessage("Student details updated successfully");
+    } catch (err) {
+      setEditError(err.message || "Failed to save student edits");
+    }
+  }
+
   return (
     <aside className="student-card-overlay">
       <button className="student-card-backdrop" onClick={close} aria-label="Close student preview" />
       <section className="student-card-modal">
         <div className={`student-hero ${stuckOff ? "is-stuck" : "is-clear"}`}>
-          <div className="student-avatar">{(student.name || "S").slice(0, 1).toUpperCase()}</div>
+          <div className="student-avatar">{(currentStudent.name || "S").slice(0, 1).toUpperCase()}</div>
           <div className="student-title-block">
             <span className={`status ${stuckOff ? "rejected" : "approved"}`}>{stuckOff ? "Stuck Off" : "Clear for drives"}</span>
-            <h2>{student.name}</h2>
-            <p>{student.rollNo || student.enrollmentNo || student.studentId || "-"} - {student.department || "-"} - {student.program || "-"}</p>
+            <h2>{currentStudent.name}</h2>
+            <p>{currentStudent.rollNo || currentStudent.enrollmentNo || currentStudent.studentId || "-"} - {currentStudent.department || "-"} - {currentStudent.program || "-"}</p>
           </div>
           <button className="student-close" onClick={close}>Close</button>
         </div>
@@ -1117,7 +2164,7 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
               <Mini label="Eligible Drives" value={summary.eligibleDrives ?? 0} />
               <Mini label="Registered" value={summary.registeredDrives ?? 0} />
               <Mini label="Present Drives" value={summary.presentDrives ?? 0} />
-              <Mini label="Absent Drives" value={summary.absentDrives ?? student.driveRestriction?.absentDriveCount ?? 0} />
+              <Mini label="Absent Drives" value={summary.absentDrives ?? currentStudent.driveRestriction?.absentDriveCount ?? 0} />
               <Mini label="Total Drives" value={summary.totalDrives ?? 0} />
               <Mini label="Stuck Off" value={stuckOff ? "Yes" : "No"} />
             </div>
@@ -1132,25 +2179,249 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
               <label>Reason
                 <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason for HOD review or override" />
               </label>
-              <button><Save size={17} /> Update Status</button>
+              <button style={{ height: "42px" }}><Save size={17} /> Update Status</button>
             </form>}
+
+            {/* Absent Drive History contributing to Stuck-Off */}
+            {(() => {
+              const absentDrives = (summary.driveRows || []).filter(row => row.overallAttendanceStatus === "OVERALL_ABSENT");
+              if (absentDrives.length > 0) {
+                return (
+                  <div className="absent-history-box" style={{ marginTop: "18px", padding: "14px", border: "1px dashed var(--red)", borderRadius: "8px", background: "#fdf3f2" }}>
+                    <h4 style={{ margin: "0 0 8px 0", color: "var(--red)", fontSize: "13px", display: "flex", alignItems: "center", gap: "6px", fontWeight: "800" }}>
+                      <ShieldCheck size={16} /> ABSENT HISTORY CONTRIBUTING TO STUCK-OFF
+                    </h4>
+                    <ul style={{ margin: 0, paddingLeft: "16px", fontSize: "12.5px", color: "#7f1d1d", textAlign: "left" }}>
+                      {absentDrives.map((row, index) => (
+                        <li key={index} style={{ marginBottom: "5px" }}>
+                          <strong>{row.drive?.companyName}</strong> ({row.drive?.jobRole || "Drive"} on {row.drive?.driveDate ? new Date(row.drive.driveDate).toLocaleDateString() : "date not set"}) - <em>{row.overallAttendanceReason || "Absent without recorded reason"}</em>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
+            {/* HOD Status Override History (Timeline from localEdits) */}
+            {(() => {
+              const restrictionEdits = (currentStudent.localEdits || []).filter(edit => edit.field === "driveRestriction.status");
+              if (restrictionEdits.length > 0) {
+                return (
+                  <div className="override-history-box" style={{ marginTop: "15px", padding: "14px", border: "1px solid var(--line)", borderRadius: "8px", background: "#f8fafc" }}>
+                    <h4 style={{ margin: "0 0 8px 0", color: "var(--muted)", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", fontWeight: "800", textTransform: "uppercase" }}>
+                      <RefreshCcw size={14} /> Manual Override History
+                    </h4>
+                    <div style={{ display: "grid", gap: "8px", textAlign: "left", fontSize: "12px" }}>
+                      {restrictionEdits.map((edit, index) => (
+                        <div key={index} style={{ padding: "6px 8px", background: "white", border: "1px solid var(--line)", borderRadius: "6px" }}>
+                          <span style={{ color: "var(--muted)" }}>{new Date(edit.editedAt).toLocaleString()}</span> — 
+                          Changed status to <strong>{edit.newValue}</strong> by <strong>{edit.editedBy?.name || edit.editedBy?.email || "System"}</strong>. 
+                          {edit.reason && <p style={{ margin: "4px 0 0 0", color: "#475569" }}><em>Reason: {edit.reason}</em></p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
           </section>
 
           <section className="student-panel">
             <div className="section-heading">
-              <h3>Student Details</h3>
-              <p>Master data synced from the connected sheet.</p>
+              <div>
+                <h3>Student Details</h3>
+                <p>Master data synced from the connected sheet.</p>
+              </div>
+              {isHod && !readOnly && !isEditing && (
+                <button className="soft button-sm" onClick={() => {
+                  setIsEditing(true);
+                  setEditForm({
+                    name: currentStudent.name || "",
+                    grNo: currentStudent.grNo || "",
+                    rollNo: currentStudent.rollNo || "",
+                    enrollmentNo: currentStudent.enrollmentNo || "",
+                    universityId: currentStudent.universityId || "",
+                    gender: currentStudent.gender || "",
+                    email: currentStudent.email || "",
+                    phone: currentStudent.phone || "",
+                    fatherContactNo: currentStudent.fatherContactNo || "",
+                    college: currentStudent.college || "",
+                    branch: currentStudent.branch || "",
+                    specialization: currentStudent.specialization || "",
+                    program: currentStudent.program || "",
+                    course: currentStudent.course || "",
+                    semester: currentStudent.semester || 1,
+                    batch: currentStudent.batch || "",
+                    cgpa: currentStudent.cgpa || 0,
+                    attendance: currentStudent.attendance || 0,
+                    domicileCity: currentStudent.domicileCity || "",
+                    domicileState: currentStudent.domicileState || "",
+                    address: currentStudent.address || "",
+                    semesters: currentStudent.semesters || {}
+                  });
+                  setEditReason("");
+                  setEditError("");
+                }}>Edit Details</button>
+              )}
             </div>
-            <div className="student-detail-grid">
-              <Mini label="Roll No" value={student.rollNo} />
-              <Mini label="Mail" value={student.email || "-"} />
-              <Mini label="Phone" value={student.phone || "-"} />
-              <Mini label="Department" value={student.department} />
-              <Mini label="CGPA" value={student.cgpa} />
-              <Mini label="Attendance" value={`${student.attendance}%`} />
-              <Mini label="Batch" value={student.batch || "-"} />
-            </div>
+            {!isEditing ? (
+              <div className="student-detail-grid">
+                <Mini label="GR No" value={currentStudent.grNo || "-"} />
+                <Mini label="Roll No" value={currentStudent.rollNo} />
+                <Mini label="Enrollment No" value={currentStudent.enrollmentNo || "-"} />
+                <Mini label="University ID" value={currentStudent.universityId || "-"} />
+                <Mini label="Name" value={currentStudent.name} />
+                <Mini label="Gender" value={currentStudent.gender || "-"} />
+                <Mini label="Date of Birth" value={currentStudent.dob ? new Date(currentStudent.dob).toLocaleDateString() : "-"} />
+                <Mini label="Mail" value={currentStudent.email || "-"} />
+                <Mini label="Phone" value={currentStudent.phone || "-"} />
+                <Mini label="Father's Phone" value={currentStudent.fatherContactNo || "-"} />
+                <Mini label="College" value={currentStudent.college || "-"} />
+                <Mini label="Department" value={currentStudent.department} />
+                <Mini label="Branch" value={currentStudent.branch || "-"} />
+                <Mini label="Specialization" value={currentStudent.specialization || "-"} />
+                <Mini label="Program" value={currentStudent.program || "-"} />
+                <Mini label="Course" value={currentStudent.course || "-"} />
+                <Mini label="Semester" value={currentStudent.semester} />
+                <Mini label="Batch" value={currentStudent.batch || "-"} />
+                <Mini label="Admission Year" value={currentStudent.admissionYear || "-"} />
+                <Mini label="Passing Year" value={currentStudent.passingYear || "-"} />
+                <Mini label="CGPA" value={formatCgpa(currentStudent.cgpa)} />
+                <Mini label="Attendance" value={`${currentStudent.attendance}%`} />
+                <Mini label="10th %" value={currentStudent.tenthPercentage != null ? currentStudent.tenthPercentage : "-"} />
+                <Mini label="10th Passing Year" value={currentStudent.tenthPassingYear || "-"} />
+                <Mini label="12th %" value={currentStudent.twelfthPercentage != null ? currentStudent.twelfthPercentage : "-"} />
+                <Mini label="12th Passing Year" value={currentStudent.twelfthPassingYear || "-"} />
+                <Mini label="Diploma %" value={currentStudent.diplomaPercentage != null ? currentStudent.diplomaPercentage : "-"} />
+                <Mini label="Graduation %" value={currentStudent.graduationPercentage != null ? currentStudent.graduationPercentage : "-"} />
+                <Mini label="PG Streams" value={currentStudent.pgStreams || "-"} />
+                <Mini label="Active Backlogs" value={currentStudent.activeBacklogs != null ? currentStudent.activeBacklogs : "-"} />
+                <Mini label="Total Backlogs" value={currentStudent.totalBacklogs != null ? currentStudent.totalBacklogs : "-"} />
+                <Mini label="Category" value={currentStudent.category || "-"} />
+                <Mini label="Domicile City" value={currentStudent.domicileCity || "-"} />
+                <Mini label="Domicile State" value={currentStudent.domicileState || "-"} />
+                <Mini label="Address" value={currentStudent.address || "-"} style={{ gridColumn: "span 5" }} />
+                <Mini label="Placement Status" value={currentStudent.placementStatus || "-"} />
+              </div>
+            ) : (
+              <form onSubmit={handleSaveEdit} style={{ display: "grid", gap: "20px" }}>
+                <div className="student-detail-grid">
+                  <label>GR No<input value={editForm.grNo || ""} onChange={(e) => setEditForm({ ...editForm, grNo: e.target.value })} /></label>
+                  <label>Roll No<input value={editForm.rollNo || ""} onChange={(e) => setEditForm({ ...editForm, rollNo: e.target.value })} required /></label>
+                  <label>Enrollment No<input value={editForm.enrollmentNo || ""} onChange={(e) => setEditForm({ ...editForm, enrollmentNo: e.target.value })} /></label>
+                  <label>University ID<input value={editForm.universityId || ""} onChange={(e) => setEditForm({ ...editForm, universityId: e.target.value })} /></label>
+                  <label>Full Name<input value={editForm.name || ""} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required /></label>
+                  <label>Gender<input value={editForm.gender || ""} onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })} /></label>
+                  <label>Mail<input type="email" value={editForm.email || ""} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} /></label>
+                  <label>Phone<input value={editForm.phone || ""} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} /></label>
+                  <label>Father's Phone<input value={editForm.fatherContactNo || ""} onChange={(e) => setEditForm({ ...editForm, fatherContactNo: e.target.value })} /></label>
+                  <label>College<input value={editForm.college || ""} onChange={(e) => setEditForm({ ...editForm, college: e.target.value })} /></label>
+                  <label>Branch<input value={editForm.branch || ""} onChange={(e) => setEditForm({ ...editForm, branch: e.target.value })} /></label>
+                  <label>Specialization<input value={editForm.specialization || ""} onChange={(e) => setEditForm({ ...editForm, specialization: e.target.value })} /></label>
+                  <label>Program<input value={editForm.program || ""} onChange={(e) => setEditForm({ ...editForm, program: e.target.value })} /></label>
+                  <label>Course<input value={editForm.course || ""} onChange={(e) => setEditForm({ ...editForm, course: e.target.value })} /></label>
+                  <label>Semester<input type="number" value={editForm.semester || 1} onChange={(e) => setEditForm({ ...editForm, semester: Number(e.target.value) })} /></label>
+                  <label>Batch<input value={editForm.batch || ""} onChange={(e) => setEditForm({ ...editForm, batch: e.target.value })} /></label>
+                  <label>CGPA<input type="number" step="0.01" value={editForm.cgpa || 0} onChange={(e) => setEditForm({ ...editForm, cgpa: Number(e.target.value) })} /></label>
+                  <label>Attendance %<input type="number" value={editForm.attendance || 0} onChange={(e) => setEditForm({ ...editForm, attendance: Number(e.target.value) })} /></label>
+                  <label>Domicile City<input value={editForm.domicileCity || ""} onChange={(e) => setEditForm({ ...editForm, domicileCity: e.target.value })} /></label>
+                  <label>Domicile State<input value={editForm.domicileState || ""} onChange={(e) => setEditForm({ ...editForm, domicileState: e.target.value })} /></label>
+                  <label style={{ gridColumn: "span 3" }}>Address<textarea value={editForm.address || ""} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} rows={2} style={{ width: "100%", padding: "8px", border: "1px solid var(--line)", borderRadius: "8px" }} /></label>
+                </div>
+                
+                {/* Semester Results Edit Grid */}
+                <div style={{ marginTop: "15px", borderTop: "1px solid var(--line)", paddingTop: "15px" }}>
+                  <h4 style={{ margin: "0 0 12px 0", fontSize: "16px", fontWeight: "700" }}>Semester Results</h4>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(180px, 1fr))", gap: "12px" }}>
+                    {Array.from({ length: 8 }, (_, i) => i + 1).map((semNum) => (
+                      <div key={semNum} style={{ border: "1px solid #e2e8f0", borderRadius: "8px", padding: "10px", background: "#f8fafc" }}>
+                        <strong style={{ fontSize: "13px", color: "#334155", display: "block", marginBottom: "4px" }}>Semester {semNum}</strong>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "6px" }}>
+                          <label style={{ gap: "3px" }}>%
+                            <input
+                              type="number"
+                              step="0.01"
+                              style={{ minHeight: "34px", padding: "4px 8px", fontSize: "13px" }}
+                              value={editForm.semesters?.[semNum]?.percentage ?? ""}
+                              onChange={(e) => {
+                                const val = e.target.value === "" ? "" : Number(e.target.value);
+                                setEditForm({
+                                  ...editForm,
+                                  semesters: {
+                                    ...editForm.semesters,
+                                    [semNum]: {
+                                      ...(editForm.semesters?.[semNum] || {}),
+                                      percentage: val
+                                    }
+                                  }
+                                });
+                              }}
+                            />
+                          </label>
+                          <label style={{ gap: "3px" }}>Status
+                            <select
+                              style={{ minHeight: "34px", padding: "4px 8px", fontSize: "13px" }}
+                              value={editForm.semesters?.[semNum]?.status ?? ""}
+                              onChange={(e) => {
+                                setEditForm({
+                                  ...editForm,
+                                  semesters: {
+                                    ...editForm.semesters,
+                                    [semNum]: {
+                                      ...(editForm.semesters?.[semNum] || {}),
+                                      status: e.target.value
+                                    }
+                                  }
+                                });
+                              }}
+                            >
+                              <option value="">N/A</option>
+                              <option value="Pass">Pass</option>
+                              <option value="Re-Appear">Re-Appear</option>
+                              <option value="Result Awaited">Result Awaited</option>
+                              <option value="Detained">Detained</option>
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {editError && <div className="error">{editError}</div>}
+                <div style={{ borderTop: "1px solid var(--line)", paddingTop: "15px", display: "grid", gap: "10px" }}>
+                  <label>Reason for Editing (audit requirement)<input value={editReason} onChange={(e) => setEditReason(e.target.value)} required placeholder="e.g. Corrected name spelling and semesters percentages as per college record" /></label>
+                  <div style={{ display: "flex", gap: "10px", marginTop: "5px" }}>
+                    <button type="submit" className="button">Save Details</button>
+                    <button type="button" className="soft" onClick={() => setIsEditing(false)}>Cancel</button>
+                  </div>
+                </div>
+              </form>
+            )}
           </section>
+          
+          {!isEditing && currentStudent.semesters && Object.keys(currentStudent.semesters).length > 0 && (
+            <section className="student-panel">
+              <div className="section-heading">
+                <h3>Semester Results</h3>
+                <p>Semester-wise percentage and status.</p>
+              </div>
+              <div className="student-detail-grid">
+                {Object.entries(currentStudent.semesters).map(([semNum, semData]) => (
+                  <div key={semNum} style={{ gridColumn: "span 1" }}>
+                    <h4 style={{ margin: 0, marginBottom: 4, fontSize: 14 }}>Semester {semNum}</h4>
+                    <p style={{ margin: 0 }}>
+                      {semData.percentage != null ? `${semData.percentage}%` : "N/A"}
+                      {semData.status && ` (${semData.status})`}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
 
         <section className="student-panel">
@@ -1171,7 +2442,7 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
                   <div className="drive-history-main">
                     <div>
                       <strong>{row.drive?.companyName || "Drive"}</strong>
-                      <span>{row.drive?.jobRole || "Role not set"}</span>
+                      <span>{row.drive?.jobRole || "Role not set"}{row.drive?.createdBy?.name ? ` • Uploaded by ${row.drive.createdBy.name}` : ""}</span>
                     </div>
                     <div className="drive-history-statuses">
                       <span className="status">{row.registrationStatus?.replaceAll("_", " ")}</span>
@@ -1200,7 +2471,7 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
             <h3>Additional Information</h3>
             <p>Unmapped sheet fields preserved for review.</p>
           </div>
-          <pre>{JSON.stringify(student.customFields || {}, null, 2)}</pre>
+          <pre>{JSON.stringify(currentStudent.customFields || {}, null, 2)}</pre>
         </section>
       </section>
     </aside>

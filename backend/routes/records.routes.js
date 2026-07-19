@@ -8,6 +8,12 @@ import { writeAudit } from "../utils/audit.js";
 
 const router = Router();
 
+function formatCgpa(value) {
+  if (value === undefined || value === null || value === "") return "";
+  const number = Number(value);
+  return Number.isFinite(number) ? Number(number.toFixed(2)) : "";
+}
+
 function buildFilter(query) {
   const filter = {};
   ["batch", "department", "branch", "course", "program", "semester", "category", "placementStatus", "status", "sourceStatus", "passingYear", "admissionYear"].forEach((field) => {
@@ -25,7 +31,7 @@ router.get("/students", requireAuth, async (req, res) => {
   const sortBy = req.query.sortBy || "updatedAt";
   const sortDir = req.query.sortDir === "asc" ? 1 : -1;
   const filter = buildFilter(req.query);
-  const projection = "studentId rollNo enrollmentNo registrationNo name email phone batch department branch course program semester cgpa attendance activeBacklogs totalBacklogs placementStatus sourceStatus driveRestriction status updatedAt";
+  const projection = "grNo universityId studentId rollNo enrollmentNo registrationNo name gender dob email phone fatherContactNo college department branch course program specialization semester section cgpa attendance activeBacklogs totalBacklogs tenthPercentage tenthPassingYear twelfthPercentage twelfthPassingYear diplomaPercentage graduationPercentage pgStreams semesters placementStatus domicileCity domicileState address sourceStatus driveRestriction status updatedAt passingYear backlogs resumeUrl";
   const [items, total] = await Promise.all([
     Student.find(filter).select(projection).sort({ [sortBy]: sortDir }).skip((page - 1) * limit).limit(limit),
     Student.countDocuments(filter)
@@ -36,38 +42,28 @@ router.get("/students", requireAuth, async (req, res) => {
 router.get("/students/export", requireAuth, requireRole("HOD"), async (req, res) => {
   const filter = buildFilter(req.query);
   const students = await Student.find(filter)
-    .select("name rollNo email phone department course batch semester cgpa driveRestriction")
+    .select("name rollNo email department batch cgpa")
     .sort({ department: 1, course: 1, program: 1, batch: 1, name: 1 })
     .lean();
 
   const rows = students.map((student) => ({
-    Name: student.name || "",
     "Roll No": student.rollNo || "",
+    Name: student.name || "",
     Email: student.email || "",
-    Phone: student.phone || "",
     Department: student.department || "",
-    Course: student.course || "",
-    CGPA: student.cgpa ?? "",
     Batch: student.batch || "",
-    Semester: student.semester || "",
-    Status: student.driveRestriction?.status === "STUCK_OFF" ? "Stuck Off" : "Active",
-    "Stuck Off": student.driveRestriction?.status === "STUCK_OFF" ? "Yes" : "No"
+    CGPA: formatCgpa(student.cgpa)
   }));
 
   const workbook = xlsx.utils.book_new();
   const worksheet = xlsx.utils.json_to_sheet(rows);
   worksheet["!cols"] = [
-    { wch: 26 },
-    { wch: 16 },
+    { wch: 18 },
     { wch: 28 },
-    { wch: 16 },
-    { wch: 18 },
-    { wch: 18 },
-    { wch: 10 },
-    { wch: 14 },
+    { wch: 34 },
+    { wch: 22 },
     { wch: 12 },
-    { wch: 14 },
-    { wch: 12 }
+    { wch: 10 }
   ];
   if (worksheet["!ref"]) worksheet["!autofilter"] = { ref: worksheet["!ref"] };
   xlsx.utils.book_append_sheet(workbook, worksheet, "Students");
@@ -79,10 +75,19 @@ router.get("/students/export", requireAuth, requireRole("HOD"), async (req, res)
 });
 
 router.get("/students/:id", requireAuth, async (req, res) => {
-  const student = await Student.findById(req.params.id).populate("createdBy approvedBy", "name email role");
+  const student = await Student.findById(req.params.id)
+    .populate("createdBy approvedBy", "name email role")
+    .populate("localEdits.editedBy", "name email role");
   if (!student) return res.status(404).json({ message: "Student not found" });
   const driveRows = await DriveStudent.find({ student: student._id })
-    .populate("drive", "companyName jobRole packageCtc driveDate approvalStatus driveStatus")
+    .populate({
+      path: "drive",
+      select: "companyName jobRole packageCtc driveDate approvalStatus driveStatus createdBy",
+      populate: {
+        path: "createdBy",
+        select: "name email role"
+      }
+    })
     .sort({ updatedAt: -1 })
     .lean();
   const driveSummary = driveRows.reduce((summary, row) => {
@@ -148,6 +153,21 @@ router.patch("/students/:id", requireAuth, requireRole("HOD"), async (req, res) 
   const student = await Student.findByIdAndUpdate(req.params.id, { $set: parsed.data.updates, $push: { localEdits: { $each: localEdits } } }, { new: true });
   await writeAudit({ actor: req.user._id, action: "STUDENT_EDITED", entity: "Student", entityId: student._id, reason: parsed.data.reason, metadata: parsed.data.updates });
   res.json(student);
+});
+
+router.delete("/students", requireAuth, requireRole("HOD"), async (req, res) => {
+  try {
+    const result = await Student.deleteMany({});
+    await writeAudit({
+      actor: req.user._id,
+      action: "ALL_STUDENTS_DELETED",
+      entity: "Student",
+      reason: "Cleared all students to re-sync from Google Sheet"
+    });
+    res.json({ message: `Deleted ${result.deletedCount} students` });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to delete students", error: error.message });
+  }
 });
 
 export default router;

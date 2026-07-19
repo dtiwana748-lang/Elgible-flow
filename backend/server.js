@@ -16,6 +16,8 @@ import dashboardRoutes from "./routes/dashboard.routes.js";
 import spreadsheetRoutes from "./routes/spreadsheet.routes.js";
 import driveRoutes from "./routes/drive.routes.js";
 import recordsRoutes from "./routes/records.routes.js";
+import eligibilityRoutes from "./routes/eligibility.routes.js";
+import { startAutoSyncInterval } from "./utils/autoSync.js";
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -60,6 +62,10 @@ app.use(cors({
   origin(origin, callback) {
     // Allow requests with no origin (like same-origin requests, curl, Postman)
     if (!origin) return callback(null, true);
+    // Allow any localhost/127.0.0.1 origin on any port for local development
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
     // Allow the origin if it's in our allowed list
     if (allowedOrigins.includes(origin)) return callback(null, true);
     // Also allow any origin that matches our Render URL just in case
@@ -123,6 +129,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/spreadsheets", spreadsheetRoutes);
 app.use("/api/drives", driveRoutes);
 app.use("/api/records", recordsRoutes);
+app.use("/api/eligibility", eligibilityRoutes);
 
 // Catch-all for React Router
 app.get("*", (req, res) => {
@@ -169,8 +176,19 @@ async function startServer() {
   // Connect to DB
   await connectWithRetry();
 
-  app.listen(port, () => {
+  // Start background auto-sync interval for connected Google Sheets (every 10 minutes)
+  startAutoSyncInterval(10 * 60 * 1000);
+
+  const server = app.listen(port, () => {
     console.log(`Server running on http://localhost:${port}`);
+  });
+  server.on("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`Port ${port} is already in use. The API may already be running at http://localhost:${port}.`);
+      console.error("Stop the existing backend process before starting another one, or set PORT to a different value.");
+      process.exit(0);
+    }
+    throw error;
   });
 }
 

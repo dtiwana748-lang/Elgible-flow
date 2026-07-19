@@ -3,12 +3,13 @@ import mongoose from "mongoose";
 const spreadsheetConnectionSchema = new mongoose.Schema(
   {
     name: { type: String, default: "Master Student Sheet", trim: true },
+    batch: { type: String, required: true, trim: true, index: true },
     sheetUrl: { type: String, required: true, trim: true },
     sheetId: { type: String, required: true, index: true },
     worksheetName: { type: String, default: "Sheet1", trim: true },
     gid: { type: String, default: "0" },
     status: { type: String, enum: ["CONNECTED", "DISCONNECTED", "ERROR"], default: "CONNECTED", index: true },
-    columnMapping: { type: Map, of: String, default: {} },
+    columnMapping: { type: Object, default: {} },
     lastSyncAt: Date,
     lastSummary: {
       totalRows: { type: Number, default: 0 },
