@@ -6,6 +6,7 @@ import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs/promises";
 import { connectDb, getDbStatus } from "./config/db.js";
 import authRoutes from "./routes/auth.routes.js";
 import studentRoutes from "./routes/student.routes.js";
@@ -19,6 +20,9 @@ import recordsRoutes from "./routes/records.routes.js";
 const app = express();
 const port = process.env.PORT || 5000;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const frontendBuildPath = path.join(__dirname, "../frontend/dist");
+const frontendPublicPath = path.join(__dirname, "../frontend/public");
+
 const defaultAllowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
@@ -63,15 +67,31 @@ app.use(express.json({ limit: "1mb" }));
 app.use(morgan("dev"));
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 500 }));
 
-// Serve static files FIRST - before any API/database checks
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-app.use(express.static(path.join(__dirname, "../frontend/public")));
-const frontendBuildPath = path.join(__dirname, "../frontend/dist");
-app.use(express.static(frontendBuildPath));
+// Serve static files with cache control
+app.use("/uploads", express.static(path.join(__dirname, "uploads"), { maxAge: "1d" }));
+app.use(express.static(frontendPublicPath, { maxAge: "1d" }));
 
-// Favicon fallback (serve logo.png as favicon if favicon.ico doesn't exist)
+// Serve frontend build assets with long cache
+app.use("/assets", express.static(path.join(frontendBuildPath, "assets"), {
+  maxAge: "1y",
+  immutable: true,
+  etag: false
+}));
+
+// Serve index.html with no cache to prevent stale assets
+app.get("/", (req, res) => {
+  res.sendFile(path.join(frontendBuildPath, "index.html"), {
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      "Pragma": "no-cache",
+      "Expires": "0"
+    }
+  });
+});
+
+// Favicon fallback
 app.get("/favicon.ico", (_req, res) => {
-  res.sendFile(path.join(__dirname, "../frontend/public/logo.png"));
+  res.sendFile(path.join(frontendPublicPath, "logo.png"));
 });
 
 // API routes
@@ -98,20 +118,18 @@ app.use("/api/spreadsheets", spreadsheetRoutes);
 app.use("/api/drives", driveRoutes);
 app.use("/api/records", recordsRoutes);
 
-// Catch-all for React Router - only for non-API, non-static requests
-app.get("*", (req, res, next) => {
-  // Don't serve index.html for static asset paths like /assets/*
-  if (req.path.startsWith("/assets/")) {
-    return res.status(404).send("Not found");
-  }
-  res.sendFile(path.join(frontendBuildPath, "index.html"), (err) => {
-    if (err) {
-      next(err);
+// Catch-all for React Router
+app.get("*", (req, res) => {
+  res.sendFile(path.join(frontendBuildPath, "index.html"), {
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      "Pragma": "no-cache",
+      "Expires": "0"
     }
   });
 });
 
-// Error handler - return JSON for API, HTML for others
+// Error handler
 app.use((err, req, res, _next) => {
   console.error(err);
   if (req.path.startsWith("/api/")) {
@@ -120,6 +138,35 @@ app.use((err, req, res, _next) => {
     res.status(err.status || 500).send(`<h1>Server Error</h1><p>${err.message}</p>`);
   }
 });
+
+async function startServer() {
+  // Debug log
+  console.log("=== Server Starting ===");
+  console.log("Frontend build path:", frontendBuildPath);
+  try {
+    const distExists = await fs.access(frontendBuildPath).then(() => true).catch(() => false);
+    console.log("Dist folder exists?", distExists);
+    if (distExists) {
+      const distContents = await fs.readdir(frontendBuildPath);
+      console.log("Dist contents:", distContents);
+      const assetsPath = path.join(frontendBuildPath, "assets");
+      const assetsExists = await fs.access(assetsPath).then(() => true).catch(() => false);
+      if (assetsExists) {
+        const assetsContents = await fs.readdir(assetsPath);
+        console.log("Assets contents:", assetsContents);
+      }
+    }
+  } catch (e) {
+    console.error("Error checking dist folder:", e);
+  }
+
+  // Connect to DB
+  await connectWithRetry();
+
+  app.listen(port, () => {
+    console.log(`Server running on http://localhost:${port}`);
+  });
+}
 
 async function connectWithRetry() {
   try {
@@ -133,7 +180,4 @@ async function connectWithRetry() {
   }
 }
 
-app.listen(port, () => {
-  console.log(`API running on http://localhost:${port}`);
-  connectWithRetry();
-});
+startServer();
