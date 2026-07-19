@@ -99,13 +99,26 @@ app.use("/api/drives", driveRoutes);
 app.use("/api/records", recordsRoutes);
 
 // Catch-all for React Router - only for non-API, non-static requests
-app.get("*", (_req, res) => {
-  res.sendFile(path.join(frontendBuildPath, "index.html"));
+app.get("*", (req, res, next) => {
+  // Don't serve index.html for static asset paths like /assets/*
+  if (req.path.startsWith("/assets/")) {
+    return res.status(404).send("Not found");
+  }
+  res.sendFile(path.join(frontendBuildPath, "index.html"), (err) => {
+    if (err) {
+      next(err);
+    }
+  });
 });
 
-app.use((err, _req, res, _next) => {
+// Error handler - return JSON for API, HTML for others
+app.use((err, req, res, _next) => {
   console.error(err);
-  res.status(err.status || 500).json({ message: err.message || "Server error" });
+  if (req.path.startsWith("/api/")) {
+    res.status(err.status || 500).json({ message: err.message || "Server error" });
+  } else {
+    res.status(err.status || 500).send(`<h1>Server Error</h1><p>${err.message}</p>`);
+  }
 });
 
 async function connectWithRetry() {
