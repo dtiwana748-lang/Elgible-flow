@@ -5,10 +5,65 @@ import { User } from "../models/User.js";
 import { Drive } from "../models/Drive.js";
 import { AuditLog } from "../models/AuditLog.js";
 import { SpreadsheetConnection } from "../models/SpreadsheetConnection.js";
+import { DriveStudent } from "../models/DriveStudent.js";
+import { EligibilityList } from "../models/EligibilityList.js";
 
 const router = Router();
 
 router.get("/summary", requireAuth, async (req, res) => {
+  if (req.user.role === "LIST_MAKER") {
+    const myLists = await EligibilityList.find({ createdBy: req.user._id });
+    const totalListsCreated = myLists.length;
+
+    let totalChecked = 0;
+    let totalEligible = 0;
+    for (const list of myLists) {
+      totalChecked += list.eligibilityBreakdown?.totalChecked || 0;
+      totalEligible += list.eligibilityBreakdown?.totalEligible || 0;
+    }
+    const eligibilityRatio = totalChecked > 0 ? Number(((totalEligible / totalChecked) * 100).toFixed(1)) : 0;
+
+    const myDrives = await Drive.find({ createdBy: req.user._id });
+    const driveIds = myDrives.map(d => d._id);
+
+    let eligiblePool = 0;
+    let registeredCount = 0;
+    for (const d of myDrives) {
+      eligiblePool += d.stats?.eligibleStudents || 0;
+      registeredCount += d.stats?.registeredStudents || 0;
+    }
+    const registeredRatio = eligiblePool > 0 ? Number(((registeredCount / eligiblePool) * 100).toFixed(1)) : 0;
+
+    const [presents, absents] = await Promise.all([
+      DriveStudent.countDocuments({ drive: { $in: driveIds }, overallAttendanceStatus: "OVERALL_PRESENT" }),
+      DriveStudent.countDocuments({ drive: { $in: driveIds }, overallAttendanceStatus: "OVERALL_ABSENT" })
+    ]);
+    const totalAttended = presents + absents;
+    const presentRate = totalAttended > 0 ? Number(((presents / totalAttended) * 100).toFixed(1)) : 0;
+
+    const recentActivity = await AuditLog.find({ actor: req.user._id })
+      .populate("actor", "name role")
+      .sort({ createdAt: -1 })
+      .limit(8);
+
+    return res.json({
+      role: "LIST_MAKER",
+      stats: {
+        totalListsCreated,
+        eligibilityRatio,
+        registeredRatio,
+        presentRate,
+        presents,
+        absents,
+        eligiblePool,
+        registeredCount,
+        totalCheckedStudents: totalChecked,
+        totalEligibleStudents: totalEligible
+      },
+      recentActivity
+    });
+  }
+
   const driveFilter = req.user.role === "HOD" ? {} : { createdBy: req.user._id };
   const [
     totalStudents,

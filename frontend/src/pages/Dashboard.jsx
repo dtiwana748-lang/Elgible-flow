@@ -252,6 +252,145 @@ function DashboardHome({ user, setActive }) {
     );
   }
 
+  if (!isHod) {
+    const lmStats = stats || {};
+    const totalChecked = lmStats.totalCheckedStudents || 0;
+    const totalEligible = lmStats.totalEligibleStudents || 0;
+    return (
+      <>
+        <PageHeader
+          eyebrow="Drive Workspace"
+          title="Dashboard"
+          subtitle="Overview of your created eligibility lists and drives"
+        >
+          <button onClick={load}><RefreshCcw size={17} /> Refresh</button>
+        </PageHeader>
+        {error && <ErrorState message={error} />}
+
+        <section className="metrics wide" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "16px" }}>
+          <StatCard 
+            icon={ListChecks} 
+            label="Eligibility Lists Created" 
+            value={lmStats.totalListsCreated || 0} 
+            support="Your created lists" 
+            onClick={() => setActive("eligibility")} 
+          />
+          <StatCard 
+            icon={Percent} 
+            label="Eligibility Ratio" 
+            value={`${lmStats.eligibilityRatio || 0}%`} 
+            support="Eligible / Checked students" 
+          />
+          <StatCard 
+            icon={CheckCircle2} 
+            label="Registration Ratio" 
+            value={`${lmStats.registeredRatio || 0}%`} 
+            support="Registered / Eligible students" 
+          />
+          <StatCard 
+            icon={Users} 
+            label="Drive Present Rate" 
+            value={`${lmStats.presentRate || 0}%`} 
+            support="Present / Registered students" 
+          />
+        </section>
+
+        {/* Dynamic Rates charts (pure CSS gradients) for their overall metrics */}
+        <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", marginTop: "20px" }}>
+          {/* Eligibility Rate Chart */}
+          <div className="panel chart-panel" style={{ margin: 0, padding: "20px", display: "grid", gap: "16px", borderTop: "4px solid var(--green)" }}>
+            <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "var(--ink)", textAlign: "left" }}>Overall Eligibility Rate</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "16px", alignItems: "center" }}>
+              <div className="donut-chart" style={{ width: "110px", height: "110px", background: `conic-gradient(var(--green) ${lmStats.eligibilityRatio || 0}%, var(--red) ${lmStats.eligibilityRatio || 0}% 100%)` }}>
+                <span style={{ fontSize: "20px", fontWeight: "900" }}>{lmStats.eligibilityRatio || 0}%</span>
+                <small style={{ fontSize: "9px", fontWeight: "800", color: "var(--muted)", textTransform: "uppercase" }}>Eligible</small>
+              </div>
+              <div style={{ display: "grid", gap: "8px", fontSize: "13px", textAlign: "left" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--line)", paddingBottom: "4px" }}>
+                  <span style={{ color: "var(--muted)" }}>Total Checked</span>
+                  <strong>{totalChecked}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "var(--green)" }}>
+                  <span>Eligible Pool</span>
+                  <strong>{totalEligible}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Registration Rate Chart */}
+          <div className="panel chart-panel" style={{ margin: 0, padding: "20px", display: "grid", gap: "16px", borderTop: "4px solid var(--blue)" }}>
+            <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "var(--ink)", textAlign: "left" }}>Overall Registration Rate</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "16px", alignItems: "center" }}>
+              <div className="donut-chart" style={{ width: "110px", height: "110px", background: `conic-gradient(var(--blue) ${lmStats.registeredRatio || 0}%, #e2e8f0 ${lmStats.registeredRatio || 0}% 100%)` }}>
+                <span style={{ fontSize: "20px", fontWeight: "900" }}>{lmStats.registeredRatio || 0}%</span>
+                <small style={{ fontSize: "9px", fontWeight: "800", color: "var(--muted)", textTransform: "uppercase" }}>Registered</small>
+              </div>
+              <div style={{ display: "grid", gap: "8px", fontSize: "13px", textAlign: "left" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--line)", paddingBottom: "4px" }}>
+                  <span style={{ color: "var(--muted)" }}>Eligible Pool</span>
+                  <strong>{lmStats.eligiblePool || 0}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "var(--blue)" }}>
+                  <span>Registered</span>
+                  <strong>{lmStats.registeredCount || 0}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Attendance Chart */}
+          <div className="panel chart-panel" style={{ margin: 0, padding: "20px", display: "grid", gap: "16px", borderTop: "4px solid var(--orange)" }}>
+            <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "var(--ink)", textAlign: "left" }}>Overall Attendance Rate</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "16px", alignItems: "center" }}>
+              <div className="donut-chart" style={{ width: "110px", height: "110px", background: `conic-gradient(var(--green) ${lmStats.presentRate || 0}%, var(--red) ${lmStats.presentRate || 0}% 100%)` }}>
+                <span style={{ fontSize: "20px", fontWeight: "900" }}>{lmStats.presentRate || 0}%</span>
+                <small style={{ fontSize: "9px", fontWeight: "800", color: "var(--muted)", textTransform: "uppercase" }}>Present</small>
+              </div>
+              <div style={{ display: "grid", gap: "8px", fontSize: "13px", textAlign: "left" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--line)", paddingBottom: "4px" }}>
+                  <span style={{ color: "var(--muted)" }}>Registered Pool</span>
+                  <strong>{lmStats.registeredCount || 0}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "var(--green)" }}>
+                  <span>Presents</span>
+                  <strong>{lmStats.presents || 0}</strong>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", color: "var(--red)" }}>
+                  <span>Absents</span>
+                  <strong>{lmStats.absents || 0}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Recent Activities Panel */}
+        <section className="panel" style={{ marginTop: "20px" }}>
+          <h3 style={{ margin: "0 0 16px 0", textAlign: "left" }}>Your Recent Activity Logs</h3>
+          <div className="activity-timeline" style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            {!(data?.recentActivity || []).length ? <p style={{ color: "var(--muted)", margin: 0 }}>No recent activities logged</p> : (
+              (data.recentActivity).map((act, index) => (
+                <div key={act._id || index} style={{ display: "flex", gap: "12px", borderBottom: "1px solid var(--line)", paddingBottom: "10px", fontSize: "14px", textAlign: "left" }}>
+                  <span className="badge" style={{ alignSelf: "flex-start", background: "var(--line)", color: "var(--ink)", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold" }}>
+                    {new Date(act.createdAt).toLocaleTimeString()}
+                  </span>
+                  <div>
+                    <strong>{act.action.replaceAll("_", " ")}</strong>
+                    <p style={{ margin: "2px 0 0 0", color: "var(--muted)", fontSize: "12px" }}>
+                      Entity: {act.entity} {act.metadata?.listName ? `- ${act.metadata.listName}` : ""} {act.metadata?.totalEligible !== undefined ? `(Total Eligible: ${act.metadata.totalEligible})` : ""}
+                    </p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+        {selected && <StudentDrawer payload={selected} close={() => setSelected(null)} onUpdateRestriction={updateSelectedRestriction} />}
+      </>
+    );
+  }
+
   return (
     <>
       <PageHeader
