@@ -58,8 +58,14 @@ app.use(helmet({
 }));
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error("Origin is not allowed by CORS"));
+    // Allow requests with no origin (like same-origin requests, curl, Postman)
+    if (!origin) return callback(null, true);
+    // Allow the origin if it's in our allowed list
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // Also allow any origin that matches our Render URL just in case
+    if (origin.includes("onrender.com")) return callback(null, true);
+    // Otherwise block it
+    return callback(new Error("Origin is not allowed by CORS"), false);
   },
   credentials: true
 }));
