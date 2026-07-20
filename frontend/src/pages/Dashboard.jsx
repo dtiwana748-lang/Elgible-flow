@@ -1555,10 +1555,13 @@ function DriveCard({ drive, user, refresh, requests = [] }) {
     <article className="drive-card">
       <div className="drive-card-header">
         <div>
-          <h3>{drive.companyName}</h3>
+          <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <BriefcaseBusiness size={18} style={{ color: "var(--blue)" }} />
+            {drive.companyName}
+          </h3>
           <p>{drive.jobRole === "Auto-created from sheet" ? "Created from uploaded attendance sheet" : `${drive.jobRole || "Role not set"}${drive.packageCtc ? ` - ${drive.packageCtc}` : ""}`}</p>
         </div>
-        <span className="status approved">Active</span>
+        <span className="status approved" style={{ background: "#dcfce7", color: "#15803d", fontWeight: "700" }}>Active</span>
       </div>
       <div className="drive-stats">
         <Mini label="Eligible" value={drive.stats?.eligibleStudents || 0} />
@@ -1576,7 +1579,7 @@ function DriveCard({ drive, user, refresh, requests = [] }) {
               onComplete={refresh}
             />
           ) : hasPendingReupload ? (
-            <button className="soft font-medium" disabled style={{ marginBottom: "10px", width: "100%", cursor: "not-allowed" }}>
+            <button className="soft font-medium" disabled style={{ marginBottom: "10px", width: "100%", cursor: "not-allowed", opacity: 0.7 }}>
               Re-upload Pending HOD Approval
             </button>
           ) : (
@@ -1584,13 +1587,13 @@ function DriveCard({ drive, user, refresh, requests = [] }) {
               Request Re-upload Access
             </button>
           )}
-          <button className="soft" onClick={() => setShowSheetList(true)} style={{ width: "100%" }}>
+          <button className="soft" onClick={() => setShowSheetList(true)} style={{ width: "100%", display: "flex", justifyContent: "center", alignItems: "center", gap: "8px" }}>
             <FileSpreadsheet size={17} /> View Uploaded Sheets
           </button>
         </>
       )}
       {user.role !== "LIST_MAKER" && (
-        <button className="soft" onClick={() => setShowSheetList(true)} style={{ width: "100%" }}>
+        <button className="soft" onClick={() => setShowSheetList(true)} style={{ width: "100%", display: "flex", justifyContent: "center", alignItems: "center", gap: "8px" }}>
           <FileSpreadsheet size={17} /> View Uploaded Sheets
         </button>
       )}
