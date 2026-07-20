@@ -1163,6 +1163,7 @@ function DriveWisePage({ user }) {
   const [requests, setRequests] = useState([]);
   const [reports, setReports] = useState([]);
   const [activeTab, setActiveTab] = useState("drives"); // drives, reports, requests
+  const [selectedCompanyFilter, setSelectedCompanyFilter] = useState("ALL");
   const [driveSearch, setDriveSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [decisionNotes, setDecisionNotes] = useState({});
@@ -1207,6 +1208,12 @@ function DriveWisePage({ user }) {
       alert("Error submitting decision: " + err.message);
     }
   }
+
+  // Filter reports by selected company
+  const displayReports = useMemo(() => {
+    if (selectedCompanyFilter === "ALL") return reports;
+    return reports.filter(r => r.companyName === selectedCompanyFilter);
+  }, [reports, selectedCompanyFilter]);
 
   // Calculate HOD reports aggregates
   const reportsTotal = useMemo(() => {
@@ -1283,93 +1290,121 @@ function DriveWisePage({ user }) {
       {/* RENDER HOD REPORTS TAB */}
       {!isMaker && activeTab === "reports" && (
         <section className="panel reports-panel" style={{ padding: "20px", display: "grid", gap: "24px" }}>
-          <div>
-            <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}><BarChart3 size={22} /> Attendance & Selection Representation of Company Processes</h3>
-            <p className="subtle">Comprehensive statistics of present/absent ratios, total eligible students, registered students, and student selections by company drives.</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+            <div>
+              <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}><BarChart3 size={22} /> Attendance & Selection Representation of Company Processes</h3>
+              <p className="subtle">Comprehensive statistics of present/absent ratios, total eligible students, registered students, and student selections by company drives.</p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <label style={{ fontSize: "13px", fontWeight: "600", color: "#475569" }}>Company View:</label>
+              <select value={selectedCompanyFilter} onChange={(e) => setSelectedCompanyFilter(e.target.value)} className="report-company-select">
+                <option value="ALL">All Companies (Overall Summary)</option>
+                {reports.map((r) => <option key={r.driveId} value={r.companyName}>{r.companyName}</option>)}
+              </select>
+            </div>
           </div>
 
-          {/* Graphical representation (Premium Visual Progress bars) */}
+          {/* Graphical Bar Chart Representation */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px" }}>
-            {reports.map((rep) => (
-              <div key={rep.driveId} className="report-visual-card" style={{ border: "1px solid var(--line)", borderRadius: "8px", padding: "16px", background: "var(--light-bg)", display: "grid", gap: "12px", textAlign: "left" }}>
-                <h4 style={{ margin: 0, color: "var(--ink)" }}>{rep.companyName} <span style={{ fontWeight: "normal", fontSize: "13px", color: "var(--muted)" }}>({rep.jobRole})</span></h4>
-                
-                {/* Funnel: Eligible -> Registered -> Selected */}
-                <div style={{ fontSize: "12px", display: "grid", gap: "6px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span>Eligible ({rep.totalEligible})</span>
-                    <span>Registered ({rep.totalRegistered})</span>
-                    <span>Selected ({rep.totalSelected})</span>
+            {displayReports.map((rep) => {
+              const maxCount = Math.max(rep.totalEligible || 0, rep.totalRegistered || 0, rep.totalSelected || 0, rep.grandTotal || 0, 1);
+              return (
+                <div key={rep.driveId} className="report-visual-card">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <h4 style={{ margin: 0, color: "var(--ink)", fontSize: "16px" }}>{rep.companyName}</h4>
+                    <span style={{ fontSize: "12px", color: "var(--muted)", fontWeight: "600" }}>{rep.jobRole}</span>
                   </div>
-                  <div className="funnel-bar-track" style={{ height: "6px", background: "var(--line)", borderRadius: "3px", overflow: "hidden" }}>
-                    <div style={{ width: `100%`, background: "var(--blue)", height: "100%" }} />
-                  </div>
-                  <div className="funnel-bar-track" style={{ height: "6px", background: "var(--line)", borderRadius: "3px", overflow: "hidden" }}>
-                    <div style={{ width: `${rep.totalEligible ? (rep.totalRegistered / rep.totalEligible) * 100 : 0}%`, background: "var(--orange)", height: "100%" }} />
-                  </div>
-                  <div className="funnel-bar-track" style={{ height: "6px", background: "var(--line)", borderRadius: "3px", overflow: "hidden" }}>
-                    <div style={{ width: `${rep.totalRegistered ? (rep.totalSelected / rep.totalRegistered) * 100 : 0}%`, background: "var(--green)", height: "100%" }} />
-                  </div>
-                </div>
+                  
+                  {/* Visual Multi-Bar Chart */}
+                  <div className="visual-chart-group">
+                    <div className="bar-representation">
+                      <span>Eligible</span>
+                      <div className="bar-track">
+                        <div className="bar-fill" style={{ width: `${(rep.totalEligible / maxCount) * 100}%`, background: "#0284c7" }} />
+                      </div>
+                      <span className="bar-label">{rep.totalEligible}</span>
+                    </div>
 
-                {/* Present/Absent attendance progress bar */}
-                <div style={{ fontSize: "12px", display: "grid", gap: "4px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span>Attendance Rate:</span>
-                    <strong>{rep.presentPercent}% Present / {rep.absentPercent}% Absent</strong>
+                    <div className="bar-representation">
+                      <span>Registered</span>
+                      <div className="bar-track">
+                        <div className="bar-fill" style={{ width: `${(rep.totalRegistered / maxCount) * 100}%`, background: "#f59e0b" }} />
+                      </div>
+                      <span className="bar-label">{rep.totalRegistered}</span>
+                    </div>
+
+                    <div className="bar-representation">
+                      <span>Selected</span>
+                      <div className="bar-track">
+                        <div className="bar-fill" style={{ width: `${(rep.totalSelected / maxCount) * 100}%`, background: "#10b981" }} />
+                      </div>
+                      <span className="bar-label">{rep.totalSelected}</span>
+                    </div>
                   </div>
-                  <div className="attendance-bar-track" style={{ height: "10px", background: "var(--red)", borderRadius: "5px", overflow: "hidden", display: "flex" }}>
-                    <div style={{ width: `${rep.presentPercent}%`, background: "var(--green)", height: "100%" }} />
+
+                  {/* Attendance Ratio Bar */}
+                  <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: "12px", display: "grid", gap: "6px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
+                      <span style={{ color: "#64748b" }}>Attendance Ratio:</span>
+                      <strong>
+                        <span style={{ color: "#16a34a" }}>{rep.present} Present ({rep.presentPercent}%)</span> / <span style={{ color: "#dc2626" }}>{rep.absent} Absent ({rep.absentPercent}%)</span>
+                      </strong>
+                    </div>
+                    <div style={{ height: "10px", background: "#fee2e2", borderRadius: "5px", overflow: "hidden", display: "flex" }}>
+                      <div style={{ width: `${rep.presentPercent}%`, background: "#16a34a", height: "100%", transition: "width 0.5s" }} />
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-            {!reports.length && <EmptyState message="No report data available" />}
+              );
+            })}
+            {!displayReports.length && <EmptyState message="No matching company report data available" />}
           </div>
 
           {/* Table Representation matching Image 5 format */}
           <div className="report-table-wrap" style={{ overflowX: "auto" }}>
-            <table className="preview-table report-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+            <table className="report-table">
               <thead>
-                <tr style={{ background: "#4caf50", color: "white" }}>
-                  <th style={{ padding: "10px", textAlign: "left", color: "white" }}>Company name</th>
-                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Total Eligible</th>
-                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Total Registered</th>
-                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Total Selected</th>
-                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Absent</th>
-                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Present</th>
-                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Grand Total</th>
-                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Present %</th>
-                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Absent %</th>
+                <tr>
+                  <th>Company name</th>
+                  <th>Total Eligible</th>
+                  <th>Total Registered</th>
+                  <th>Total Selected</th>
+                  <th>Absent</th>
+                  <th>Present</th>
+                  <th>Grand Total</th>
+                  <th>Present %</th>
+                  <th>Absent %</th>
                 </tr>
               </thead>
               <tbody>
-                {reports.map((rep) => (
-                  <tr key={rep.driveId} style={{ borderBottom: "1px solid var(--line)" }}>
-                    <td style={{ padding: "10px", textAlign: "left", fontWeight: "bold" }}>{rep.companyName}</td>
-                    <td style={{ padding: "10px", textAlign: "center" }}>{rep.totalEligible}</td>
-                    <td style={{ padding: "10px", textAlign: "center" }}>{rep.totalRegistered}</td>
-                    <td style={{ padding: "10px", textAlign: "center" }}>{rep.totalSelected}</td>
-                    <td style={{ padding: "10px", textAlign: "center", color: "var(--red)" }}>{rep.absent}</td>
-                    <td style={{ padding: "10px", textAlign: "center", color: "var(--green)" }}>{rep.present}</td>
-                    <td style={{ padding: "10px", textAlign: "center", fontWeight: "bold" }}>{rep.grandTotal}</td>
-                    <td style={{ padding: "10px", textAlign: "center", fontWeight: "bold", color: "var(--green)" }}>{rep.presentPercent}%</td>
-                    <td style={{ padding: "10px", textAlign: "center", fontWeight: "bold", color: "var(--red)" }}>{rep.absentPercent}%</td>
+                {displayReports.map((rep) => (
+                  <tr key={rep.driveId}>
+                    <td style={{ fontWeight: "bold" }}>{rep.companyName}</td>
+                    <td>{rep.totalEligible}</td>
+                    <td>{rep.totalRegistered}</td>
+                    <td>{rep.totalSelected}</td>
+                    <td style={{ color: "#dc2626", fontWeight: "600" }}>{rep.absent}</td>
+                    <td style={{ color: "#16a34a", fontWeight: "600" }}>{rep.present}</td>
+                    <td style={{ fontWeight: "bold" }}>{rep.grandTotal}</td>
+                    <td><span className="percent-pill present">{rep.presentPercent}%</span></td>
+                    <td><span className="percent-pill absent">{rep.absentPercent}%</span></td>
                   </tr>
                 ))}
                 
                 {/* Grand Total Green Row matching Image 5 */}
-                <tr style={{ background: "#4caf50", color: "white", fontWeight: "bold" }}>
-                  <td style={{ padding: "10px", textAlign: "left", color: "white" }}>Grand Total</td>
-                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.totalEligible}</td>
-                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.totalRegistered}</td>
-                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.totalSelected}</td>
-                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.absent}</td>
-                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.present}</td>
-                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.grandTotal}</td>
-                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.presentPercent}%</td>
-                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.absentPercent}%</td>
-                </tr>
+                {selectedCompanyFilter === "ALL" && (
+                  <tr className="total-row">
+                    <td>Grand Total</td>
+                    <td>{reportsTotal.totalEligible}</td>
+                    <td>{reportsTotal.totalRegistered}</td>
+                    <td>{reportsTotal.totalSelected}</td>
+                    <td>{reportsTotal.absent}</td>
+                    <td>{reportsTotal.present}</td>
+                    <td>{reportsTotal.grandTotal}</td>
+                    <td><span className="percent-pill present" style={{ background: "#ffffff", color: "#137333" }}>{reportsTotal.presentPercent}%</span></td>
+                    <td><span className="percent-pill absent" style={{ background: "#ffffff", color: "#c5221f" }}>{reportsTotal.absentPercent}%</span></td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

@@ -681,3 +681,155 @@ tbody tr:hover { background: #f8fbfc; }
     max-height: 180px;
   }
 }
+
+/* High fidelity HOD Drives Reports & Visual Charts styles */
+.report-company-select {
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+  background-color: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  min-width: 240px;
+  outline: none;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.report-company-select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 14px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.02);
+}
+
+.report-table th {
+  background-color: #4caf50 !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  font-size: 12px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+  padding: 12px 14px !important;
+  text-align: center !important;
+  border-bottom: 2px solid #388e3c !important;
+}
+
+.report-table th:first-child {
+  text-align: left !important;
+}
+
+.report-table td {
+  padding: 12px 14px !important;
+  text-align: center !important;
+  font-size: 13px !important;
+  color: #334155 !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+.report-table td:first-child {
+  text-align: left !important;
+}
+
+.report-table tr:hover td {
+  background-color: #f8fafc !important;
+}
+
+.report-table tr.total-row {
+  background-color: #4caf50 !important;
+  font-weight: bold !important;
+}
+
+.report-table tr.total-row td {
+  background-color: #4caf50 !important;
+  color: #ffffff !important;
+  font-weight: bold !important;
+  border-bottom: none !important;
+}
+
+.percent-pill {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 9999px;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.percent-pill.present {
+  background-color: #e6f4ea;
+  color: #137333;
+}
+
+.percent-pill.absent {
+  background-color: #fce8e6;
+  color: #c5221f;
+}
+
+.report-visual-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 20px;
+  background: #ffffff;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.03);
+  transition: transform 0.2s, box-shadow 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.report-visual-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 15px rgba(0, 0, 0, 0.05);
+}
+
+.visual-chart-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.bar-representation {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.bar-representation span {
+  width: 90px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  text-align: right;
+}
+
+.bar-representation .bar-track {
+  flex: 1;
+  height: 12px;
+  background-color: #f1f5f9;
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+
+.bar-representation .bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.6s ease-in-out;
+}
+
+.bar-representation .bar-label {
+  width: 40px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+  text-align: left;
+}
