@@ -10,6 +10,7 @@ import { DriveStudent } from "../models/DriveStudent.js";
 import { Student } from "../models/Student.js";
 import { AttendanceSheet } from "../models/AttendanceSheet.js";
 import { writeAudit } from "../utils/audit.js";
+import { AccessRequest } from "../models/AccessRequest.js";
 import { calculateDriveAttendance } from "../utils/driveAttendance.js";
 
 const router = Router();
@@ -333,15 +334,29 @@ async function processAutoDriveRows(rows, userId, fileName, fileType, headers) {
 }
 
 async function processExistingDriveRows({ drive, rows, userId, markMissingAbsent = false, fileName, fileType, headers }) {
+  // Filter rows by company name to match the drive's company (e.g. Coforge)
+  let processedRows = rows;
+  if (drive && drive.companyName) {
+    processedRows = rows.filter((row) => {
+      const keys = Object.keys(row);
+      const companyKey = keys.find(k => {
+        const norm = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+        return norm.includes("companyname") || norm === "company";
+      });
+      if (!companyKey) return true;
+      return String(row[companyKey] || "").trim().toLowerCase() === drive.companyName.trim().toLowerCase();
+    });
+  }
+
   const seenStudentIds = new Set();
   const errors = [];
   let matched = 0;
   let present = 0;
   let absent = 0;
 
-  for (let index = 0; index < rows.length; index += 1) {
+  for (let index = 0; index < processedRows.length; index += 1) {
     try {
-      const lookup = buildStudentLookup(rows[index]);
+      const lookup = buildStudentLookup(processedRows[index]);
       if (!lookup) {
         errors.push({ row: index + 2, message: "No usable student identifier found" });
         continue;
@@ -351,8 +366,8 @@ async function processExistingDriveRows({ drive, rows, userId, markMissingAbsent
         errors.push({ row: index + 2, message: "Student not found in master records" });
         continue;
       }
-      const registrationValue = pickColumn(rows[index], ["registration", "registered", "register"]);
-      const processStatuses = getProcessStatuses(rows[index]);
+      const registrationValue = pickColumn(processedRows[index], ["registration", "registered", "register"]);
+      const processStatuses = getProcessStatuses(processedRows[index]);
       const anyPresent = processStatuses.some((item) => item.status === "PRESENT");
       const registrationStatus = normalizeRegistrationStatus(registrationValue, anyPresent ? "PRESENT" : "ABSENT");
       const driveStudent = await DriveStudent.findOneAndUpdate(
@@ -397,7 +412,7 @@ async function processExistingDriveRows({ drive, rows, userId, markMissingAbsent
 
   await refreshDriveStats(drive._id);
   
-  const result = { rows: rows.length, matched, present, absent, errors };
+  const result = { rows: processedRows.length, matched, present, absent, errors };
   
   // Save the attendance sheet
   await AttendanceSheet.create({
@@ -406,7 +421,7 @@ async function processExistingDriveRows({ drive, rows, userId, markMissingAbsent
     fileName,
     fileType,
     headers,
-    rows,
+    rows: processedRows,
     uploadResult: result
   });
 
@@ -588,6 +603,17 @@ router.post("/:id/students/:studentId/round-attendance", requireRole("LIST_MAKER
 router.post("/:id/attendance-upload", requireRole("LIST_MAKER"), upload.single("file"), async (req, res) => {
   const drive = await Drive.findOne({ _id: req.params.id, createdBy: req.user._id });
   if (!drive) return res.status(404).json({ message: "Drive not found" });
+
+  const activeRequest = await AccessRequest.findOne({
+    drive: drive._id,
+    requester: req.user._id,
+    type: "REUPLOAD_SHEET",
+    status: "APPROVED"
+  });
+  if (!activeRequest) {
+    return res.status(403).json({ message: "HOD approval is required to upload or update this drive sheet. Please submit an access request." });
+  }
+
   if (!req.file) return res.status(400).json({ message: "Attendance file is required" });
 
   const markMissingAbsent = parseMarkMissingAbsent(req.body.markMissingAbsent);
@@ -595,6 +621,10 @@ router.post("/:id/attendance-upload", requireRole("LIST_MAKER"), upload.single("
   const fileName = req.file.originalname;
   const fileType = fileName.split('.').pop().toLowerCase();
   const result = await processExistingDriveRows({ drive, rows, userId: req.user._id, markMissingAbsent, fileName, fileType, headers });
+  
+  activeRequest.status = "COMPLETED";
+  await activeRequest.save();
+
   await writeAudit({ actor: req.user._id, action: "DRIVE_ATTENDANCE_UPLOADED", entity: "Drive", entityId: drive._id, metadata: { rows: result.rows, matched: result.matched, present: result.present, absent: result.absent, errors: result.errors.length } });
   res.json(result);
 });
@@ -602,6 +632,17 @@ router.post("/:id/attendance-upload", requireRole("LIST_MAKER"), upload.single("
 router.post("/:id/attendance-rows", requireRole("LIST_MAKER"), async (req, res) => {
   const drive = await Drive.findOne({ _id: req.params.id, createdBy: req.user._id });
   if (!drive) return res.status(404).json({ message: "Drive not found" });
+
+  const activeRequest = await AccessRequest.findOne({
+    drive: drive._id,
+    requester: req.user._id,
+    type: "REUPLOAD_SHEET",
+    status: "APPROVED"
+  });
+  if (!activeRequest) {
+    return res.status(403).json({ message: "HOD approval is required to upload or update this drive sheet. Please submit an access request." });
+  }
+
   const parsed = editedAttendanceRowsSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: "Edited attendance rows are invalid" });
   const headers = parsed.data.rows.length ? Object.keys(parsed.data.rows[0]) : [];
@@ -614,6 +655,10 @@ router.post("/:id/attendance-rows", requireRole("LIST_MAKER"), async (req, res) 
     fileType: "xlsx",
     headers
   });
+
+  activeRequest.status = "COMPLETED";
+  await activeRequest.save();
+
   await writeAudit({ actor: req.user._id, action: "DRIVE_ATTENDANCE_EDITED_ROWS_UPLOADED", entity: "Drive", entityId: drive._id, metadata: { rows: result.rows, matched: result.matched, present: result.present, absent: result.absent, errors: result.errors.length } });
   res.json(result);
 });
@@ -684,6 +729,156 @@ router.get("/sheets/:id", requireAuth, async (req, res) => {
   }
   
   res.json(sheet);
+});
+
+// Get Drive reports summary for HOD
+router.get("/reports/drives-summary", requireAuth, requireRole("HOD"), async (req, res) => {
+  try {
+    const drives = await Drive.find({ driveStatus: { $nin: ["ARCHIVED", "CANCELLED"] } }).lean();
+    const summaries = await Promise.all(
+      drives.map(async (drive) => {
+        const stats = await DriveStudent.aggregate([
+          { $match: { drive: drive._id } },
+          {
+            $group: {
+              _id: "$drive",
+              totalEligible: { $sum: { $cond: [{ $eq: ["$eligibilityStatus", "ELIGIBLE"] }, 1, 0] } },
+              totalRegistered: { $sum: { $cond: [{ $eq: ["$registrationStatus", "REGISTERED"] }, 1, 0] } },
+              totalSelected: { $sum: { $cond: [{ $in: ["$finalOutcome", ["SELECTED", "PLACED", "Selected", "Placed"]] }, 1, 0] } },
+              present: { $sum: { $cond: [{ $eq: ["$overallAttendanceStatus", "OVERALL_PRESENT"] }, 1, 0] } },
+              absent: { $sum: { $cond: [{ $eq: ["$overallAttendanceStatus", "OVERALL_ABSENT"] }, 1, 0] } }
+            }
+          }
+        ]);
+        const rep = stats[0] || { totalEligible: 0, totalRegistered: 0, totalSelected: 0, present: 0, absent: 0 };
+        const grandTotal = rep.present + rep.absent;
+        const presentPercent = grandTotal > 0 ? Math.round((rep.present / grandTotal) * 100) : 0;
+        const absentPercent = grandTotal > 0 ? Math.round((rep.absent / grandTotal) * 100) : 0;
+        return {
+          driveId: drive._id,
+          companyName: drive.companyName,
+          jobRole: drive.jobRole,
+          packageCtc: drive.packageCtc,
+          driveDate: drive.driveDate,
+          totalEligible: rep.totalEligible,
+          totalRegistered: rep.totalRegistered,
+          totalSelected: rep.totalSelected,
+          present: rep.present,
+          absent: rep.absent,
+          grandTotal,
+          presentPercent,
+          absentPercent
+        };
+      })
+    );
+    res.json(summaries.filter(Boolean));
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Access Requests Routes
+// Submit an access request (re-upload or edit sheet)
+router.post("/access-requests", requireAuth, async (req, res) => {
+  try {
+    const { driveId, type, sheetId, reason, proposedChanges, updatedRows } = req.body;
+    if (!driveId || !type || !reason) {
+      return res.status(400).json({ message: "driveId, type, and reason are required" });
+    }
+    const drive = await Drive.findById(driveId);
+    if (!drive) return res.status(404).json({ message: "Drive not found" });
+
+    const newRequest = await AccessRequest.create({
+      drive: driveId,
+      requester: req.user._id,
+      type,
+      sheet: sheetId || undefined,
+      requestReason: reason,
+      proposedChanges: proposedChanges || [],
+      updatedRows: updatedRows || [],
+      status: "PENDING"
+    });
+
+    await writeAudit({
+      actor: req.user._id,
+      action: `ACCESS_REQUEST_SUBMITTED_${type}`,
+      entity: "AccessRequest",
+      entityId: newRequest._id,
+      metadata: { driveId, type, proposedChangesCount: proposedChanges?.length || 0 }
+    });
+
+    res.status(201).json(newRequest);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get access requests list
+router.get("/access-requests/list", requireAuth, async (req, res) => {
+  try {
+    const filter = req.user.role === "HOD" ? {} : { requester: req.user._id };
+    const requests = await AccessRequest.find(filter)
+      .populate("drive", "companyName jobRole")
+      .populate("requester", "name email role")
+      .populate("approvedBy", "name email")
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json(requests);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Approve/Reject access request (HOD only)
+router.post("/access-requests/:id/decision", requireAuth, requireRole("HOD"), async (req, res) => {
+  try {
+    const { decision, remarks } = req.body; // APPROVED or REJECTED
+    if (!decision || !["APPROVED", "REJECTED"].includes(decision)) {
+      return res.status(400).json({ message: "Valid decision (APPROVED or REJECTED) is required" });
+    }
+
+    const request = await AccessRequest.findById(req.params.id);
+    if (!request) return res.status(404).json({ message: "Request not found" });
+
+    request.status = decision;
+    request.remarks = remarks || "";
+    request.approvedBy = req.user._id;
+    request.approvedAt = new Date();
+
+    if (decision === "APPROVED" && request.type === "EDIT_SHEET") {
+      const drive = await Drive.findById(request.drive);
+      if (!drive) return res.status(404).json({ message: "Drive not found" });
+
+      const sheet = request.sheet ? await AttendanceSheet.findById(request.sheet) : null;
+      
+      // Process rows to update student records for this drive
+      await processExistingDriveRows({
+        drive,
+        rows: request.updatedRows,
+        userId: request.requester,
+        markMissingAbsent: false,
+        fileName: sheet ? `edited-${sheet.fileName}` : `${drive.companyName}-edited-data.xlsx`,
+        fileType: "xlsx",
+        headers: sheet?.headers || (request.updatedRows.length ? Object.keys(request.updatedRows[0]) : [])
+      });
+
+      request.status = "COMPLETED";
+    }
+
+    await request.save();
+
+    await writeAudit({
+      actor: req.user._id,
+      action: `ACCESS_REQUEST_${decision}`,
+      entity: "AccessRequest",
+      entityId: request._id,
+      metadata: { remarks }
+    });
+
+    res.json(request);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 export default router;

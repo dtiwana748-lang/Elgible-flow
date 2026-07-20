@@ -176,8 +176,8 @@ async function startServer() {
   // Connect to DB
   await connectWithRetry();
 
-  // Start background auto-sync interval for connected Google Sheets (every 10 minutes)
-  startAutoSyncInterval(10 * 60 * 1000);
+  // Start background auto-sync interval for connected Google Sheets (every 2 minutes)
+  startAutoSyncInterval(2 * 60 * 1000);
 
   const server = app.listen(port, () => {
     console.log(`Server running on http://localhost:${port}`);

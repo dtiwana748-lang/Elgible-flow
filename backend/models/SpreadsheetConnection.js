@@ -5,6 +5,7 @@ const spreadsheetConnectionSchema = new mongoose.Schema(
     name: { type: String, default: "Master Student Sheet", trim: true },
     batch: { type: String, required: true, trim: true, index: true },
     sheetUrl: { type: String, required: true, trim: true },
+    appsScriptUrl: { type: String, trim: true },
     sheetId: { type: String, required: true, index: true },
     worksheetName: { type: String, default: "Sheet1", trim: true },
     gid: { type: String, default: "0" },

@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { Student } from "../models/Student.js";
 import { DriveStudent } from "../models/DriveStudent.js";
 import { writeAudit } from "../utils/audit.js";
+import { triggerSpreadsheetUpdate } from "../utils/spreadsheetSync.js";
 
 const router = Router();
 
@@ -151,6 +152,7 @@ router.patch("/students/:id", requireAuth, requireRole("HOD"), async (req, res) 
     editedBy: req.user._id
   }));
   const student = await Student.findByIdAndUpdate(req.params.id, { $set: parsed.data.updates, $push: { localEdits: { $each: localEdits } } }, { new: true });
+  triggerSpreadsheetUpdate(student);
   await writeAudit({ actor: req.user._id, action: "STUDENT_EDITED", entity: "Student", entityId: student._id, reason: parsed.data.reason, metadata: parsed.data.updates });
   res.json(student);
 });

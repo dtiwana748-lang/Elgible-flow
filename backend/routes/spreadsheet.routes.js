@@ -8,6 +8,7 @@ import { SpreadsheetSyncLog } from "../models/SpreadsheetSyncLog.js";
 import { Student } from "../models/Student.js";
 import { writeAudit } from "../utils/audit.js";
 import { calculateCGPA } from "../utils/studentRules.js";
+import { runBackgroundSync } from "../utils/autoSync.js";
 
 const router = Router();
 
@@ -224,6 +225,8 @@ function buildStudentPayload(row, mapping, connection, rowNumber) {
   // Fallback values
   payload.course = payload.course || payload.branch || "Unmapped";
   payload.batch = connection.batch || payload.batch || payload.passingYear || "Unmapped";
+  payload.activeBacklogs = payload.activeBacklogs ?? payload.backlogs ?? 0;
+  payload.totalBacklogs = payload.totalBacklogs ?? payload.backlogs ?? 0;
   payload.backlogs = payload.backlogs ?? payload.activeBacklogs ?? 0;
   payload.department = payload.department || payload.branch || "Unmapped";
   payload.program = payload.program || payload.course || payload.branch || "Unmapped";
@@ -258,6 +261,23 @@ async function fetchCsv(connection) {
   return response.text();
 }
 
+// Webhook endpoint for live real-time sync from Google Sheets
+router.post("/webhook-sync", async (req, res) => {
+  const { sheetId, batch } = req.query;
+  const filter = {};
+  if (sheetId) filter.sheetId = sheetId;
+  if (batch) filter.batch = batch;
+
+  const connections = await SpreadsheetConnection.find(filter);
+  if (!connections.length) {
+    return res.status(404).json({ message: "No matching spreadsheet connection found" });
+  }
+
+  // Trigger sync asynchronously in background
+  runBackgroundSync();
+  res.json({ message: "Sync triggered via live spreadsheet webhook", matchedConnections: connections.length });
+});
+
 router.use(requireAuth);
 
 router.get("/connection", requireRole("HOD"), async (_req, res) => {
@@ -269,6 +289,7 @@ router.get("/connection", requireRole("HOD"), async (_req, res) => {
 router.post("/connection", requireRole("HOD"), async (req, res) => {
   const parsed = z.object({
     sheetUrl: z.string().url(),
+    appsScriptUrl: z.string().url().optional().or(z.literal("")),
     worksheetName: z.string().optional(),
     batch: z.string().min(1),
     columnMapping: z.record(z.string()).optional()
@@ -285,6 +306,7 @@ router.post("/connection", requireRole("HOD"), async (req, res) => {
     name: `Master Student Sheet - ${parsed.data.batch}`,
     batch: parsed.data.batch,
     sheetUrl: parsed.data.sheetUrl,
+    appsScriptUrl: parsed.data.appsScriptUrl || undefined,
     sheetId,
     gid: extractGid(parsed.data.sheetUrl),
     worksheetName: parsed.data.worksheetName || "Sheet1",

@@ -201,6 +201,8 @@ function buildStudentPayload(row, mapping, connection, rowNumber) {
   
   payload.course = payload.course || payload.branch || "Unmapped";
   payload.batch = connection.batch || payload.batch || payload.passingYear || "Unmapped";
+  payload.activeBacklogs = payload.activeBacklogs ?? payload.backlogs ?? 0;
+  payload.totalBacklogs = payload.totalBacklogs ?? payload.backlogs ?? 0;
   payload.backlogs = payload.backlogs ?? payload.activeBacklogs ?? 0;
   payload.department = payload.department || payload.branch || "Unmapped";
   payload.program = payload.program || payload.course || payload.branch || "Unmapped";

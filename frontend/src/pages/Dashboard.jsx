@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3, Bell, BriefcaseBusiness, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
-  FileDown, Gauge, GraduationCap, Home, LayoutDashboard, ListChecks, LogOut, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, UserCog, UserPlus, Users, UsersRound
+  FileDown, Gauge, GraduationCap, Home, LayoutDashboard, ListChecks, LogOut, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, UserCog, UserPlus, Users, UsersRound
 } from "lucide-react";
 import { api, API_URL } from "../api.js";
 import { assetUrl } from "../api.js";
@@ -10,6 +10,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 const hodNav = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "eligibility", label: "Eligibility Lists", icon: ListChecks },
+  { id: "drives", label: "Drives & Reports", icon: BriefcaseBusiness },
   { id: "managers", label: "Managers", icon: UsersRound },
   { id: "records", label: "Records", icon: Database },
   { id: "profile", label: "Profile", icon: UserCog }
@@ -72,7 +73,7 @@ export default function Dashboard() {
         {active === "create-eligibility" && !isHod && <CreateEligibilityListPage onComplete={(list) => { setSelectedEligibilityList(list); setActive("eligibility"); }} />}
         {active === "view-eligibility" && selectedEligibilityList && <EligibilityListDetailPage list={selectedEligibilityList} back={() => setActive("eligibility")} isHod={isHod} />}
         {active === "master-data" && !isHod && <MasterDataReadOnlyPage />}
-        {active === "drives" && !isHod && <DriveWisePage user={user} />}
+        {active === "drives" && <DriveWisePage user={user} />}
         {active === "profile" && <ProfilePage user={user} />}
       </section>
     </main>
@@ -406,6 +407,42 @@ function DashboardHome({ user, setActive }) {
         <CalendarDays size={20} />
         <span>Current academic session: <strong>2026-27</strong></span>
       </section>
+
+      {/* Feature Quick Launchpad */}
+      <section className="panel feature-launchpad" style={{ padding: "20px", display: "grid", gap: "16px", marginBottom: "20px", background: "linear-gradient(135deg, var(--light-bg) 0%, rgba(59, 130, 246, 0.05) 100%)", border: "1px solid var(--line)" }}>
+        <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}><Sparkles size={18} style={{ color: "var(--orange)" }} /> Feature Quick Launchpad</h3>
+        <p className="subtle" style={{ margin: 0 }}>Access new features directly, including backlog filters, sheet approvals, reports, and Google Sheets bi-directional sync setup.</p>
+        
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px", marginTop: "8px" }}>
+          {isHod ? (
+            <>
+              <div onClick={() => setActive("drives")} style={{ cursor: "pointer", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", background: "white", transition: "transform 0.2s" }} className="hover-lift">
+                <h4 style={{ margin: "0 0 4px 0", color: "var(--blue)" }}>Drives & Reports</h4>
+                <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>View drive statistics, selections, and Image 5 style attendance sheets.</p>
+              </div>
+              <div onClick={() => setActive("records")} style={{ cursor: "pointer", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", background: "white", transition: "transform 0.2s" }} className="hover-lift">
+                <h4 style={{ margin: "0 0 4px 0", color: "var(--orange)" }}>Bi-Directional Sync</h4>
+                <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>Configure Google Apps Script Web App for real-time sheet write-backs.</p>
+              </div>
+              <div onClick={() => setActive("eligibility")} style={{ cursor: "pointer", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", background: "white", transition: "transform 0.2s" }} className="hover-lift">
+                <h4 style={{ margin: "0 0 4px 0", color: "var(--green)" }}>Eligibility Lists</h4>
+                <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>Review eligibility lists and finalize them for the placement office.</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <div onClick={() => setActive("eligibility")} style={{ cursor: "pointer", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", background: "white", transition: "transform 0.2s" }} className="hover-lift">
+                <h4 style={{ margin: "0 0 4px 0", color: "var(--blue)" }}>Create Eligibility List</h4>
+                <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>Use the new <strong>Active Backlogs Max</strong> filter for flexible student shortlists.</p>
+              </div>
+              <div onClick={() => setActive("drives")} style={{ cursor: "pointer", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", background: "white", transition: "transform 0.2s" }} className="hover-lift">
+                <h4 style={{ margin: "0 0 4px 0", color: "var(--orange)" }}>Edit Sheets & Re-upload</h4>
+                <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>Edit uploaded spreadsheets or request re-upload access from HOD.</p>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
       <section className="metrics wide">
         <StatCard icon={FileSpreadsheet} label="Total Student Records" value={stats.totalStudents || 0} support="All synced master records" onClick={() => setActive("records")} />
         <StatCard icon={CheckCircle2} label="Total Active" value={stats.totalActive || 0} support="Active students in sheet" />
@@ -687,6 +724,7 @@ function RecordsPage() {
   const [newBatch, setNewBatch] = useState("2027");
   const [logs, setLogs] = useState([]);
   const [sheetUrl, setSheetUrl] = useState("");
+  const [appsScriptUrl, setAppsScriptUrl] = useState("");
   const [headers, setHeaders] = useState([]);
   const [mapping, setMapping] = useState({});
   const [students, setStudents] = useState({ items: [], total: 0, page: 1, pages: 1 });
@@ -695,6 +733,7 @@ function RecordsPage() {
   const [message, setMessage] = useState("");
   const [loadError, setLoadError] = useState("");
   const [syncResult, setSyncResult] = useState(null);
+  const [showSyncGuide, setShowSyncGuide] = useState(false);
 
   const query = useMemo(() => new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== "")).toString(), [filters]);
 
@@ -795,11 +834,12 @@ function RecordsPage() {
     }
     await api("/spreadsheets/connection", { 
       method: "POST", 
-      body: JSON.stringify({ sheetUrl, batch: newBatch, columnMapping: mapping }) 
+      body: JSON.stringify({ sheetUrl, appsScriptUrl, batch: newBatch, columnMapping: mapping }) 
     });
     setMessage(`Google Sheet connection saved for batch ${newBatch}`);
     setHeaders([]);
     setSheetUrl("");
+    setAppsScriptUrl("");
     await loadConnection();
   }
   async function syncNow(id) {
@@ -907,13 +947,55 @@ function RecordsPage() {
         </div>
 
         <div className="connection-form-section" style={{ marginTop: "25px", borderTop: "1px solid #e2e8f0", paddingTop: "20px" }}>
-          <h4 style={{ margin: "0 0 15px 0" }}>Connect New Student Sheet</h4>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px" }}>
+            <h4 style={{ margin: 0 }}>Connect New Student Sheet</h4>
+            <button className="soft button-sm" onClick={() => setShowSyncGuide(!showSyncGuide)}>
+              {showSyncGuide ? "Hide Sync Guide" : "Bi-Directional Setup Guide"}
+            </button>
+          </div>
+
+          {showSyncGuide && (
+            <div className="sync-guide-box" style={{ background: "var(--light-bg)", border: "1px solid var(--line)", borderRadius: "8px", padding: "16px", marginBottom: "16px", fontSize: "13px", lineHeight: "1.5", textAlign: "left" }}>
+              <h5 style={{ margin: "0 0 8px 0", color: "var(--ink)" }}>How to set up Bi-Directional Live Sync:</h5>
+              <ol style={{ paddingLeft: "20px", margin: "0 0 12px 0", display: "grid", gap: "6px" }}>
+                <li>Open your Google Sheet, click on <strong>Extensions</strong> &rarr; <strong>Apps Script</strong>.</li>
+                <li>Delete any code in the editor, and paste the following Apps Script:
+                  <pre style={{ background: "rgba(0,0,0,0.04)", padding: "10px", borderRadius: "4px", overflowX: "auto", fontSize: "11px", margin: "6px 0", maxHeight: "150px" }}>{`function doPost(e) {
+  try {
+    var payload = JSON.parse(e.postData.contents);
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+    if (payload.action === "update") {
+      var rowNumber = payload.rowNumber;
+      var rowData = payload.data;
+      var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+      for (var col = 0; col < headers.length; col++) {
+        var header = headers[col];
+        var mappedField = payload.mapping[header] || header;
+        if (rowData[header] !== undefined) {
+          sheet.getRange(rowNumber, col + 1).setValue(rowData[header]);
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({ success: true })).setMimeType(ContentService.MimeType.JSON);
+    }
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ success: false, error: err.message })).setMimeType(ContentService.MimeType.JSON);
+  }
+}`}</pre>
+                </li>
+                <li>Click <strong>Deploy</strong> &rarr; <strong>New Deployment</strong>. Select type <strong>Web App</strong>.</li>
+                <li>Configure: Execute as: <strong>Me</strong>, Who has access: <strong>Anyone</strong>. Click Deploy.</li>
+                <li>Copy the <strong>Web App URL</strong> and paste it into the <em>Google Apps Script Web App URL</em> field below.</li>
+                <li><strong>Instant Webhook Sync (Optional)</strong>: To sync changes instantly from Sheet to master data, add an <code>onChange</code> trigger in Google Apps Script that pings <code>{window.location.origin}/api/spreadsheets/webhook-sync?sheetId=YOUR_SHEET_ID</code> on any edit!</li>
+              </ol>
+            </div>
+          )}
+
           <div style={{ display: "grid", gap: "14px" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "10px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
               <select 
                 value={newBatch} 
                 onChange={(e) => setNewBatch(e.target.value)} 
-                style={{ height: "40px", fontSize: "14px", padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: "6px", background: "white" }}
+                style={{ height: "40px", fontSize: "14px", padding: "8px 12px", border: "1px solid #cbd5e1", borderRadius: "6px", background: "white", maxWidth: "160px" }}
               >
                 {["2024", "2025", "2026", "2027", "2028", "2029", "2030"].map((b) => (
                   <option key={b} value={b}>Batch {b}</option>
@@ -921,9 +1003,15 @@ function RecordsPage() {
               </select>
               <input 
                 style={{ height: "40px", fontSize: "14px", flex: 1 }}
-                placeholder="Paste Google Sheet URL for selected batch" 
+                placeholder="Google Sheet CSV Link or URL" 
                 value={sheetUrl} 
                 onChange={(e) => setSheetUrl(e.target.value)} 
+              />
+              <input 
+                style={{ height: "40px", fontSize: "14px", flex: 1 }}
+                placeholder="Google Apps Script Web App URL (for live write-back)" 
+                value={appsScriptUrl} 
+                onChange={(e) => setAppsScriptUrl(e.target.value)} 
               />
             </div>
             <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end", flexWrap: "wrap" }}>
@@ -1072,20 +1160,89 @@ function FilterBar({ filters, setFilters }) {
 function DriveWisePage({ user }) {
   const [drives, setDrives] = useState([]);
   const [stuckOff, setStuckOff] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [activeTab, setActiveTab] = useState("drives"); // drives, reports, requests
   const [driveSearch, setDriveSearch] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [decisionNotes, setDecisionNotes] = useState({});
+
   const isMaker = user.role === "LIST_MAKER";
+
   const filteredDrives = drives.filter((drive) => {
     const text = [drive.companyName, drive.jobRole, drive.packageCtc, drive.driveType].join(" ").toLowerCase();
     return text.includes(driveSearch.trim().toLowerCase());
   });
+
   async function load() {
-    setDrives(await api("/drives"));
-    if (user.role === "HOD") setStuckOff(await api("/drives/reports/stuck-off"));
+    setLoading(true);
+    try {
+      setDrives(await api("/drives"));
+      setRequests(await api("/drives/access-requests/list"));
+      if (user.role === "HOD") {
+        setStuckOff(await api("/drives/reports/stuck-off"));
+        setReports(await api("/drives/reports/drives-summary"));
+      }
+    } catch (err) {
+      console.error("Error loading drives page data:", err);
+    } finally {
+      setLoading(false);
+    }
   }
-  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function handleDecision(requestId, decision) {
+    const remarks = decisionNotes[requestId] || "";
+    try {
+      await api(`/drives/access-requests/${requestId}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ decision, remarks })
+      });
+      setDecisionNotes({ ...decisionNotes, [requestId]: "" });
+      load();
+    } catch (err) {
+      alert("Error submitting decision: " + err.message);
+    }
+  }
+
+  // Calculate HOD reports aggregates
+  const reportsTotal = useMemo(() => {
+    if (!reports.length) return { present: 0, absent: 0, grandTotal: 0, totalEligible: 0, totalRegistered: 0, totalSelected: 0 };
+    const totals = reports.reduce((acc, rep) => {
+      acc.present += rep.present || 0;
+      acc.absent += rep.absent || 0;
+      acc.grandTotal += rep.grandTotal || 0;
+      acc.totalEligible += rep.totalEligible || 0;
+      acc.totalRegistered += rep.totalRegistered || 0;
+      acc.totalSelected += rep.totalSelected || 0;
+      return acc;
+    }, { present: 0, absent: 0, grandTotal: 0, totalEligible: 0, totalRegistered: 0, totalSelected: 0 });
+    totals.presentPercent = totals.grandTotal > 0 ? Math.round((totals.present / totals.grandTotal) * 100) : 0;
+    totals.absentPercent = totals.grandTotal > 0 ? Math.round((totals.absent / totals.grandTotal) * 100) : 0;
+    return totals;
+  }, [reports]);
+
   return (
     <>
-      <PageHeader eyebrow="Drive Workflow" title={isMaker ? "Upload Drive Sheet" : "Drive Wise"} subtitle={isMaker ? "Upload one attendance sheet; drives are created automatically from the Company column" : "Eligibility, registration and round progress by company drive"} />
+      <PageHeader 
+        eyebrow="Drive Workflow" 
+        title={isMaker ? "Upload Drive Sheet" : "Drives & Reports"} 
+        subtitle={isMaker ? "Upload one attendance sheet; drives are created automatically from the Company column" : "Manage drives, approvals, and view analytics reports"} 
+      />
+
+      {!isMaker && (
+        <section className="hod-tabs" style={{ display: "flex", gap: "10px", marginBottom: "20px", borderBottom: "1px solid var(--line)", paddingBottom: "10px" }}>
+          <button className={activeTab === "drives" ? "tab-btn active" : "tab-btn soft"} onClick={() => setActiveTab("drives")}>Drives List</button>
+          <button className={activeTab === "reports" ? "tab-btn active" : "tab-btn soft"} onClick={() => setActiveTab("reports")}>Attendance & Selection Reports</button>
+          <button className={activeTab === "requests" ? "tab-btn active" : "tab-btn soft"} onClick={() => setActiveTab("requests")}>
+            Access Requests {requests.filter(r => r.status === "PENDING").length > 0 && <span className="badge-count" style={{ background: "var(--red)", color: "white", padding: "2px 6px", borderRadius: "50%", marginLeft: "6px", fontSize: "11px" }}>{requests.filter(r => r.status === "PENDING").length}</span>}
+          </button>
+        </section>
+      )}
+
       {isMaker && (
         <section className="panel upload-sheet-panel">
           <div>
@@ -1095,25 +1252,269 @@ function DriveWisePage({ user }) {
           <AttendancePreviewEditor submitPath="/drives/attendance-rows" submitLabel="Upload & Create Drives" onComplete={load} />
         </section>
       )}
-      <section className="drive-toolbar">
-        <label className="searchbox drive-search" aria-label="Search drives">
-          <Search size={18} />
-          <input value={driveSearch} onChange={(event) => setDriveSearch(event.target.value)} placeholder="Search drive by company, role, or package" />
-        </label>
-        <button className="soft" onClick={load}><RefreshCcw size={17} /> Refresh Drives</button>
-      </section>
-      <section className="drive-grid">
-        {filteredDrives.map((drive) => <DriveCard key={drive._id} drive={drive} user={user} refresh={load} />)}
-        {!drives.length && <EmptyState message="No drives created yet" />}
-        {!!drives.length && !filteredDrives.length && <EmptyState icon={Search} message="No matching drive found" />}
-      </section>
-      {user.role === "HOD" && <StuckOffReport items={stuckOff} />}
+
+      {/* RENDER DRIVES TAB */}
+      {(isMaker || activeTab === "drives") && (
+        <>
+          <section className="drive-toolbar">
+            <label className="searchbox drive-search" aria-label="Search drives">
+              <Search size={18} />
+              <input value={driveSearch} onChange={(event) => setDriveSearch(event.target.value)} placeholder="Search drive by company, role, or package" />
+            </label>
+            <button className="soft" onClick={load}><RefreshCcw size={17} /> Refresh Drives</button>
+          </section>
+          <section className="drive-grid">
+            {filteredDrives.map((drive) => (
+              <DriveCard 
+                key={drive._id} 
+                drive={drive} 
+                user={user} 
+                refresh={load} 
+                requests={requests}
+              />
+            ))}
+            {!drives.length && <EmptyState message="No drives created yet" />}
+            {!!drives.length && !filteredDrives.length && <EmptyState icon={Search} message="No matching drive found" />}
+          </section>
+          {user.role === "HOD" && <StuckOffReport items={stuckOff} />}
+        </>
+      )}
+
+      {/* RENDER HOD REPORTS TAB */}
+      {!isMaker && activeTab === "reports" && (
+        <section className="panel reports-panel" style={{ padding: "20px", display: "grid", gap: "24px" }}>
+          <div>
+            <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}><BarChart3 size={22} /> Attendance & Selection Representation of Company Processes</h3>
+            <p className="subtle">Comprehensive statistics of present/absent ratios, total eligible students, registered students, and student selections by company drives.</p>
+          </div>
+
+          {/* Graphical representation (Premium Visual Progress bars) */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px" }}>
+            {reports.map((rep) => (
+              <div key={rep.driveId} className="report-visual-card" style={{ border: "1px solid var(--line)", borderRadius: "8px", padding: "16px", background: "var(--light-bg)", display: "grid", gap: "12px", textAlign: "left" }}>
+                <h4 style={{ margin: 0, color: "var(--ink)" }}>{rep.companyName} <span style={{ fontWeight: "normal", fontSize: "13px", color: "var(--muted)" }}>({rep.jobRole})</span></h4>
+                
+                {/* Funnel: Eligible -> Registered -> Selected */}
+                <div style={{ fontSize: "12px", display: "grid", gap: "6px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Eligible ({rep.totalEligible})</span>
+                    <span>Registered ({rep.totalRegistered})</span>
+                    <span>Selected ({rep.totalSelected})</span>
+                  </div>
+                  <div className="funnel-bar-track" style={{ height: "6px", background: "var(--line)", borderRadius: "3px", overflow: "hidden" }}>
+                    <div style={{ width: `100%`, background: "var(--blue)", height: "100%" }} />
+                  </div>
+                  <div className="funnel-bar-track" style={{ height: "6px", background: "var(--line)", borderRadius: "3px", overflow: "hidden" }}>
+                    <div style={{ width: `${rep.totalEligible ? (rep.totalRegistered / rep.totalEligible) * 100 : 0}%`, background: "var(--orange)", height: "100%" }} />
+                  </div>
+                  <div className="funnel-bar-track" style={{ height: "6px", background: "var(--line)", borderRadius: "3px", overflow: "hidden" }}>
+                    <div style={{ width: `${rep.totalRegistered ? (rep.totalSelected / rep.totalRegistered) * 100 : 0}%`, background: "var(--green)", height: "100%" }} />
+                  </div>
+                </div>
+
+                {/* Present/Absent attendance progress bar */}
+                <div style={{ fontSize: "12px", display: "grid", gap: "4px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>Attendance Rate:</span>
+                    <strong>{rep.presentPercent}% Present / {rep.absentPercent}% Absent</strong>
+                  </div>
+                  <div className="attendance-bar-track" style={{ height: "10px", background: "var(--red)", borderRadius: "5px", overflow: "hidden", display: "flex" }}>
+                    <div style={{ width: `${rep.presentPercent}%`, background: "var(--green)", height: "100%" }} />
+                  </div>
+                </div>
+              </div>
+            ))}
+            {!reports.length && <EmptyState message="No report data available" />}
+          </div>
+
+          {/* Table Representation matching Image 5 format */}
+          <div className="report-table-wrap" style={{ overflowX: "auto" }}>
+            <table className="preview-table report-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+              <thead>
+                <tr style={{ background: "#4caf50", color: "white" }}>
+                  <th style={{ padding: "10px", textAlign: "left", color: "white" }}>Company name</th>
+                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Total Eligible</th>
+                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Total Registered</th>
+                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Total Selected</th>
+                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Absent</th>
+                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Present</th>
+                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Grand Total</th>
+                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Present %</th>
+                  <th style={{ padding: "10px", textAlign: "center", color: "white" }}>Absent %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reports.map((rep) => (
+                  <tr key={rep.driveId} style={{ borderBottom: "1px solid var(--line)" }}>
+                    <td style={{ padding: "10px", textAlign: "left", fontWeight: "bold" }}>{rep.companyName}</td>
+                    <td style={{ padding: "10px", textAlign: "center" }}>{rep.totalEligible}</td>
+                    <td style={{ padding: "10px", textAlign: "center" }}>{rep.totalRegistered}</td>
+                    <td style={{ padding: "10px", textAlign: "center" }}>{rep.totalSelected}</td>
+                    <td style={{ padding: "10px", textAlign: "center", color: "var(--red)" }}>{rep.absent}</td>
+                    <td style={{ padding: "10px", textAlign: "center", color: "var(--green)" }}>{rep.present}</td>
+                    <td style={{ padding: "10px", textAlign: "center", fontWeight: "bold" }}>{rep.grandTotal}</td>
+                    <td style={{ padding: "10px", textAlign: "center", fontWeight: "bold", color: "var(--green)" }}>{rep.presentPercent}%</td>
+                    <td style={{ padding: "10px", textAlign: "center", fontWeight: "bold", color: "var(--red)" }}>{rep.absentPercent}%</td>
+                  </tr>
+                ))}
+                
+                {/* Grand Total Green Row matching Image 5 */}
+                <tr style={{ background: "#4caf50", color: "white", fontWeight: "bold" }}>
+                  <td style={{ padding: "10px", textAlign: "left", color: "white" }}>Grand Total</td>
+                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.totalEligible}</td>
+                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.totalRegistered}</td>
+                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.totalSelected}</td>
+                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.absent}</td>
+                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.present}</td>
+                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.grandTotal}</td>
+                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.presentPercent}%</td>
+                  <td style={{ padding: "10px", textAlign: "center", color: "white" }}>{reportsTotal.absentPercent}%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* RENDER HOD REQUESTS TAB */}
+      {!isMaker && activeTab === "requests" && (
+        <section className="panel requests-panel" style={{ padding: "20px", display: "grid", gap: "20px" }}>
+          <div>
+            <h3 style={{ margin: 0 }}>List Maker Access Requests</h3>
+            <p className="subtle">Review and manage sheet edit approvals and re-upload permissions submitted by list makers.</p>
+          </div>
+
+          <div style={{ display: "grid", gap: "16px" }}>
+            {requests.filter(r => r.status === "PENDING").map((req) => (
+              <div key={req._id} className="request-card" style={{ border: "1px solid var(--line)", borderRadius: "8px", padding: "16px", display: "grid", gap: "12px", textAlign: "left", background: "white" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span className="badge" style={{ background: req.type === "EDIT_SHEET" ? "rgba(232, 93, 38, 0.1)" : "rgba(13, 134, 165, 0.1)", color: req.type === "EDIT_SHEET" ? "var(--orange)" : "var(--blue)", padding: "4px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold" }}>
+                    {req.type === "EDIT_SHEET" ? "SHEET EDIT APPROVAL" : "RE-UPLOAD ACCESS"}
+                  </span>
+                  <span style={{ fontSize: "12px", color: "var(--muted)" }}>{new Date(req.createdAt).toLocaleString()}</span>
+                </div>
+                <div>
+                  <strong>Drive:</strong> {req.drive?.companyName} ({req.drive?.jobRole})<br />
+                  <strong>Submitted By:</strong> {req.requester?.name} ({req.requester?.email})<br />
+                  <strong>Reason:</strong> "{req.requestReason}"
+                </div>
+
+                {/* Show proposed edits diff table if type is EDIT_SHEET */}
+                {req.type === "EDIT_SHEET" && req.proposedChanges && req.proposedChanges.length > 0 && (
+                  <div style={{ background: "var(--light-bg)", borderRadius: "6px", padding: "12px", border: "1px solid var(--line)" }}>
+                    <h5 style={{ margin: "0 0 8px 0" }}>Proposed Cell Modifications:</h5>
+                    <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ borderBottom: "2px solid var(--line)", background: "rgba(0,0,0,0.03)" }}>
+                          <th style={{ padding: "6px", textAlign: "left" }}>Roll No</th>
+                          <th style={{ padding: "6px", textAlign: "left" }}>Student Name</th>
+                          <th style={{ padding: "6px", textAlign: "left" }}>Field</th>
+                          <th style={{ padding: "6px", textAlign: "center" }}>Original</th>
+                          <th style={{ padding: "6px", textAlign: "center" }}>New</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {req.proposedChanges.map((change, idx) => (
+                          <tr key={idx} style={{ borderBottom: "1px solid var(--line)" }}>
+                            <td style={{ padding: "6px", textAlign: "left" }}>{change.rollNo}</td>
+                            <td style={{ padding: "6px", textAlign: "left" }}>{change.studentName}</td>
+                            <td style={{ padding: "6px", textAlign: "left", fontWeight: "bold" }}>{change.field}</td>
+                            <td style={{ padding: "6px", textAlign: "center", color: "var(--red)", background: "rgba(235, 87, 87, 0.05)" }}>{change.oldValue}</td>
+                            <td style={{ padding: "6px", textAlign: "center", color: "var(--green)", background: "rgba(39, 174, 96, 0.05)", fontWeight: "bold" }}>{change.newValue}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+                  <textarea 
+                    placeholder="Enter HOD remarks/feedback (optional)..." 
+                    value={decisionNotes[req._id] || ""} 
+                    onChange={(e) => setDecisionNotes({ ...decisionNotes, [req._id]: e.target.value })}
+                    rows={2}
+                    style={{ width: "100%", fontSize: "13px", padding: "8px" }}
+                  />
+                  <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                    <button className="soft" onClick={() => handleDecision(req._id, "REJECTED")} style={{ color: "var(--red)" }}>Reject Request</button>
+                    <button onClick={() => handleDecision(req._id, "APPROVED")}>Approve Request</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {requests.filter(r => r.status === "PENDING").length === 0 && <EmptyState message="No pending access requests" />}
+          </div>
+
+          {/* REQUEST HISTORY TABLE */}
+          <div style={{ marginTop: "30px" }}>
+            <h4>Approval & Edit History</h4>
+            <p className="subtle">Detailed log of past approvals, sheet edits, and re-uploads with timestamps and outcomes.</p>
+            <div className="report-table-wrap" style={{ overflowX: "auto", marginTop: "12px" }}>
+              <table className="preview-table" style={{ width: "100%", fontSize: "12px" }}>
+                <thead>
+                  <tr style={{ background: "var(--line)" }}>
+                    <th style={{ padding: "8px", textAlign: "left" }}>Time</th>
+                    <th style={{ padding: "8px", textAlign: "left" }}>Requester</th>
+                    <th style={{ padding: "8px", textAlign: "left" }}>Drive</th>
+                    <th style={{ padding: "8px", textAlign: "left" }}>Type</th>
+                    <th style={{ padding: "8px", textAlign: "center" }}>Status</th>
+                    <th style={{ padding: "8px", textAlign: "left" }}>Reason</th>
+                    <th style={{ padding: "8px", textAlign: "left" }}>HOD Remarks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {requests.filter(r => r.status !== "PENDING").map((req) => (
+                    <tr key={req._id} style={{ borderBottom: "1px solid var(--line)" }}>
+                      <td style={{ padding: "8px", textAlign: "left" }}>{new Date(req.approvedAt || req.updatedAt).toLocaleString()}</td>
+                      <td style={{ padding: "8px", textAlign: "left" }}>{req.requester?.name}</td>
+                      <td style={{ padding: "8px", textAlign: "left" }}>{req.drive?.companyName}</td>
+                      <td style={{ padding: "8px", textAlign: "left", fontWeight: "bold" }}>{req.type === "EDIT_SHEET" ? "Edit Sheet" : "Re-upload"}</td>
+                      <td style={{ padding: "8px", textAlign: "center" }}>
+                        <span className="badge" style={{ 
+                          background: req.status === "REJECTED" ? "rgba(235, 87, 87, 0.1)" : "rgba(39, 174, 96, 0.1)", 
+                          color: req.status === "REJECTED" ? "var(--red)" : "var(--green)", 
+                          padding: "2px 6px", borderRadius: "4px" 
+                        }}>
+                          {req.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: "8px", textAlign: "left" }}>{req.requestReason}</td>
+                      <td style={{ padding: "8px", textAlign: "left", color: "var(--muted)" }}>{req.remarks || "-"}</td>
+                    </tr>
+                  ))}
+                  {requests.filter(r => r.status !== "PENDING").length === 0 && (
+                    <tr><td colSpan={7} style={{ textAlign: "center", padding: "20px" }}>No history found</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
     </>
   );
 }
 
-function DriveCard({ drive, user, refresh }) {
+function DriveCard({ drive, user, refresh, requests = [] }) {
   const [showSheetList, setShowSheetList] = useState(false);
+
+  const hasApprovedReupload = requests.some(r => r.drive?._id === drive._id && r.type === "REUPLOAD_SHEET" && r.status === "APPROVED");
+  const hasPendingReupload = requests.some(r => r.drive?._id === drive._id && r.type === "REUPLOAD_SHEET" && r.status === "PENDING");
+
+  async function requestReupload() {
+    const reason = prompt("Enter the reason for requesting permission to re-upload the attendance sheet:");
+    if (!reason || !reason.trim()) return;
+    try {
+      await api("/drives/access-requests", {
+        method: "POST",
+        body: JSON.stringify({ driveId: drive._id, type: "REUPLOAD_SHEET", reason: reason.trim() })
+      });
+      refresh();
+    } catch (err) {
+      alert("Error requesting re-upload: " + err.message);
+    }
+  }
 
   return (
     <article className="drive-card">
@@ -1131,23 +1532,39 @@ function DriveCard({ drive, user, refresh }) {
       </div>
       {user.role === "LIST_MAKER" && (
         <>
-          <AttendancePreviewEditor
-            compact
-            title="Update Existing Drive Sheet"
-            submitPath={`/drives/${drive._id}/attendance-rows`}
-            submitLabel="Upload Again"
-            onComplete={refresh}
-          />
-          <button className="soft" onClick={() => setShowSheetList(true)}>
+          {hasApprovedReupload ? (
+            <AttendancePreviewEditor
+              compact
+              title="Update Existing Drive Sheet (Approved)"
+              submitPath={`/drives/${drive._id}/attendance-rows`}
+              submitLabel="Upload Again"
+              onComplete={refresh}
+            />
+          ) : hasPendingReupload ? (
+            <button className="soft font-medium" disabled style={{ marginBottom: "10px", width: "100%", cursor: "not-allowed" }}>
+              Re-upload Pending HOD Approval
+            </button>
+          ) : (
+            <button className="soft warning-action font-medium" onClick={requestReupload} style={{ marginBottom: "10px", width: "100%", color: "var(--orange)" }}>
+              Request Re-upload Access
+            </button>
+          )}
+          <button className="soft" onClick={() => setShowSheetList(true)} style={{ width: "100%" }}>
             <FileSpreadsheet size={17} /> View Uploaded Sheets
           </button>
         </>
+      )}
+      {user.role !== "LIST_MAKER" && (
+        <button className="soft" onClick={() => setShowSheetList(true)} style={{ width: "100%" }}>
+          <FileSpreadsheet size={17} /> View Uploaded Sheets
+        </button>
       )}
       
       {/* Sheet List Modal */}
       {showSheetList && (
         <DriveSheetList 
           driveId={drive._id} 
+          user={user}
           onClose={() => setShowSheetList(false)} 
         />
       )}
@@ -1156,7 +1573,7 @@ function DriveCard({ drive, user, refresh }) {
 }
 
 // New Component for Viewing Drive Sheets
-function DriveSheetList({ driveId, onClose }) {
+function DriveSheetList({ driveId, user, onClose }) {
   const [sheets, setSheets] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -1178,6 +1595,21 @@ function DriveSheetList({ driveId, onClose }) {
   useEffect(() => {
     loadSheets();
   }, [driveId]);
+
+  const filteredRows = useMemo(() => {
+    if (!selectedSheet) return [];
+    const compName = selectedSheet.drive?.companyName;
+    if (!compName) return selectedSheet.rows || [];
+    return (selectedSheet.rows || []).filter(row => {
+      const keys = Object.keys(row);
+      const companyKey = keys.find(k => {
+        const norm = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+        return norm.includes("companyname") || norm === "company";
+      });
+      if (!companyKey) return true;
+      return String(row[companyKey] || "").trim().toLowerCase() === compName.trim().toLowerCase();
+    });
+  }, [selectedSheet]);
 
   return (
     <>
@@ -1210,9 +1642,13 @@ function DriveSheetList({ driveId, onClose }) {
         <SheetPreviewModal 
           title={`${selectedSheet.fileName}${selectedSheet.drive?.companyName ? ` - ${selectedSheet.drive.companyName}` : ""}`}
           headers={selectedSheet.headers || []}
-          rows={selectedSheet.rows || []}
-          editable={false}
+          rows={filteredRows}
+          editable={user?.role === "LIST_MAKER"}
+          requireApproval={user?.role === "LIST_MAKER"}
+          driveId={driveId}
+          sheetId={selectedSheet._id}
           onClose={() => setSelectedSheet(null)}
+          onComplete={loadSheets}
         />
       )}
     </>
@@ -1346,14 +1782,132 @@ function AttendancePreviewEditor({ submitPath, submitLabel, onComplete, compact 
 }
 
 // New Sheet Preview Modal Component
-function SheetPreviewModal({ title, headers, rows, editable = false, onUpdateCell, onClose }) {
+function SheetPreviewModal({ title, headers, rows: initialRows, editable = false, requireApproval = false, driveId, sheetId, onClose, onUpdateCell, onComplete }) {
+  const [rows, setRows] = useState(initialRows);
+  const [reason, setReason] = useState("");
+  const [showRequestForm, setShowRequestForm] = useState(false);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setRows(initialRows);
+  }, [initialRows]);
+
+  const hasChanges = useMemo(() => {
+    if (!requireApproval) return false;
+    for (let i = 0; i < rows.length; i++) {
+      const orig = initialRows[i];
+      const curr = rows[i];
+      for (const key of headers) {
+        if ((orig[key] ?? "") !== (curr[key] ?? "")) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }, [rows, initialRows, headers, requireApproval]);
+
+  function handleChange(rowIndex, header, value) {
+    if (requireApproval) {
+      setRows(prev => prev.map((row, idx) => idx === rowIndex ? { ...row, [header]: value } : row));
+    } else {
+      onUpdateCell?.(rowIndex, header, value);
+    }
+  }
+
+  async function submitEditRequest() {
+    if (!reason.trim()) {
+      setMessage("Please enter a reason for the edit request");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const proposedChanges = [];
+      for (let i = 0; i < rows.length; i++) {
+        const orig = initialRows[i];
+        const curr = rows[i];
+        const rollNo = orig["Roll No"] || orig["ROLL NO"] || "";
+        const studentName = orig["Student Name"] || orig["STUDENT_NAME"] || "";
+        for (const key of headers) {
+          if ((orig[key] ?? "") !== (curr[key] ?? "")) {
+            proposedChanges.push({
+              rowIndex: i,
+              rollNo,
+              studentName,
+              field: key,
+              oldValue: orig[key] ?? "",
+              newValue: curr[key] ?? ""
+            });
+          }
+        }
+      }
+      await api("/drives/access-requests", {
+        method: "POST",
+        body: JSON.stringify({
+          driveId,
+          type: "EDIT_SHEET",
+          sheetId,
+          reason: reason.trim(),
+          proposedChanges,
+          updatedRows: rows
+        })
+      });
+      setMessage("Edit approval request submitted to HOD successfully!");
+      setReason("");
+      setTimeout(() => {
+        setShowRequestForm(false);
+        onClose();
+        onComplete?.();
+      }, 2000);
+    } catch (err) {
+      setMessage("Failed: " + err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const currentRows = requireApproval ? rows : initialRows;
+
   return (
     <div className="sheet-preview-modal-overlay">
       <div className="sheet-preview-modal">
-        <div className="sheet-preview-modal-header">
-          <h3>{title}</h3>
-          <button className="soft" onClick={onClose}><ChevronLeft size={17} /> Close</button>
+        <div className="sheet-preview-modal-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <h3 style={{ margin: 0 }}>{title}</h3>
+            {requireApproval && <p className="subtle" style={{ margin: "4px 0 0 0", fontSize: "12px" }}>Edit cells and click 'Request HOD Approval' when finished.</p>}
+          </div>
+          <div style={{ display: "flex", gap: "10px" }}>
+            {requireApproval && hasChanges && !showRequestForm && (
+              <button onClick={() => setShowRequestForm(true)} style={{ background: "var(--orange)", color: "white" }}>Request HOD Approval</button>
+            )}
+            <button className="soft" onClick={onClose}><ChevronLeft size={17} /> Close</button>
+          </div>
         </div>
+
+        {showRequestForm && (
+          <div className="request-reason-banner" style={{ background: "var(--orange-bg)", padding: "14px", borderBottom: "1px solid var(--line)", textAlign: "left" }}>
+            <h4 style={{ margin: "0 0 6px 0", color: "var(--orange)", fontSize: "14px" }}>HOD Approval Required for Edits</h4>
+            <p style={{ margin: "0 0 10px 0", fontSize: "12px" }}>Please explain why these modifications are needed. Edits will be applied once approved.</p>
+            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+              <input 
+                type="text" 
+                placeholder="Reason for changes (e.g. Corrected roll number attendance)..." 
+                value={reason} 
+                onChange={(e) => setReason(e.target.value)} 
+                style={{ flex: 1, padding: "8px", fontSize: "13px" }}
+              />
+              <button onClick={submitEditRequest} disabled={busy || !reason.trim()}>{busy ? "Submitting..." : "Submit to HOD"}</button>
+              <button className="soft" onClick={() => setShowRequestForm(false)}>Cancel</button>
+            </div>
+            {message && <p style={{ margin: "6px 0 0 0", fontSize: "12px", fontWeight: "bold" }}>{message}</p>}
+          </div>
+        )}
+
+        {message && !showRequestForm && (
+          <div className="notice" style={{ margin: "10px" }}>{message}</div>
+        )}
+
         <div className="sheet-preview-modal-body">
           <div className="preview-table-wrap full-size">
             <table className="preview-table">
@@ -1361,14 +1915,14 @@ function SheetPreviewModal({ title, headers, rows, editable = false, onUpdateCel
                 <tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr>
               </thead>
               <tbody>
-                {rows.map((row, rowIndex) => (
+                {currentRows.map((row, rowIndex) => (
                   <tr key={rowIndex}>
                     {headers.map((header) => (
                       <td key={header}>
                         {editable ? (
                           <input 
                             value={row[header] ?? ""} 
-                            onChange={(event) => onUpdateCell?.(rowIndex, header, event.target.value)} 
+                            onChange={(event) => handleChange(rowIndex, header, event.target.value)} 
                           />
                         ) : (
                           <span>{row[header] ?? ""}</span>
@@ -1564,7 +2118,8 @@ function CreateEligibilityListPage({ onComplete }) {
     batches: [],
     program: "",
     attendanceMin: "",
-    allowStuckOff: false
+    allowStuckOff: false,
+    activeBacklogsMax: ""
   });
   const [options, setOptions] = useState({ courses: [], departments: [], batches: [], programs: [] });
   const [message, setMessage] = useState("");
@@ -1599,7 +2154,7 @@ function CreateEligibilityListPage({ onComplete }) {
         program: form.program,
         allowStuckOff: form.allowStuckOff
       };
-      ["cgpaMin", "tenthPercentageMin", "twelfthPercentageMin", "attendanceMin"].forEach((field) => {
+      ["cgpaMin", "tenthPercentageMin", "twelfthPercentageMin", "attendanceMin", "activeBacklogsMax"].forEach((field) => {
         if (form[field] !== "") payload[field] = Number(form[field]);
       });
       const result = await api("/eligibility", { method: "POST", body: JSON.stringify(payload) });
@@ -1727,6 +2282,10 @@ function CreateEligibilityListPage({ onComplete }) {
                 <div className="form-group">
                   <label>Attendance % Min</label>
                   <input type="number" min="0" max="100" value={form.attendanceMin} onChange={(e) => setForm({ ...form, attendanceMin: e.target.value })} />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="activeBacklogsMax">Active Backlogs Max</label>
+                  <input id="activeBacklogsMax" type="number" min="0" max="50" value={form.activeBacklogsMax} onChange={(e) => setForm({ ...form, activeBacklogsMax: e.target.value })} />
                 </div>
                 <div className="form-group checkbox-group">
                   <label className="checkbox-label">

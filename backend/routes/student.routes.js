@@ -6,6 +6,7 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { Student } from "../models/Student.js";
 import { writeAudit } from "../utils/audit.js";
 import { calculateEligibility } from "../utils/studentRules.js";
+import { triggerSpreadsheetUpdate } from "../utils/spreadsheetSync.js";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -99,6 +100,7 @@ router.patch("/:id", requireRole("LIST_MAKER", "HOD"), async (req, res) => {
 
   const student = await Student.findByIdAndUpdate(req.params.id, updates, { new: true });
   if (!student) return res.status(404).json({ message: "Student not found" });
+  triggerSpreadsheetUpdate(student);
 
   await writeAudit({ actor: req.user._id, action: "STUDENT_UPDATED", entity: "Student", entityId: student._id, metadata: updates });
   res.json(student);
