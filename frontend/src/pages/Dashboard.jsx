@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   BarChart3, Bell, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
-  FileDown, Gauge, GraduationCap, Home, LayoutDashboard, ListChecks, LogOut, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users, UsersRound, X
+  FileDown, Gauge, GraduationCap, Home, Info, LayoutDashboard, ListChecks, LogOut, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users, UsersRound, X
 } from "lucide-react";
 import { api, API_URL } from "../api.js";
 import { assetUrl } from "../api.js";
@@ -511,15 +511,7 @@ function ChartDetailView({ title, data, close }) {
   const total = values.reduce((sum, value) => sum + value, 0);
   const max = Math.max(...values, 1);
   const colors = ["#006d78", "#e85d26", "#35aa4a", "#f0ad1f", "#0d86a5", "#7a5cff", "#c94a42", "#536174"];
-  let cursor = 0;
-  const chartFill = total
-    ? `conic-gradient(${data.map((item, index) => {
-      const size = ((Number(item.value) || 0) / total) * 100;
-      const segment = `${colors[index % colors.length]} ${cursor}% ${cursor + size}%`;
-      cursor += size;
-      return segment;
-    }).join(", ")})`
-    : "conic-gradient(#dbe5eb 0 100%)";
+  const topData = data.slice(0, 12);
 
   return (
     <>
@@ -527,11 +519,7 @@ function ChartDetailView({ title, data, close }) {
         <button className="soft" onClick={close}><ChevronLeft size={17} /> Back to Dashboard</button>
       </PageHeader>
       <section className="panel analytics-detail">
-        <div className="analytics-hero">
-          <div className="donut-chart large" style={{ "--chart-fill": chartFill }}>
-            <span>{total}</span>
-            <small>Total</small>
-          </div>
+        <div className="analytics-hero graph-layout">
           <div className="analytics-summary">
             <h3>{title}</h3>
             <p className="subtle">Detailed graphical view with totals, percentage split, and ranked data.</p>
@@ -541,6 +529,30 @@ function ChartDetailView({ title, data, close }) {
               <Mini label="Highest Count" value={max} />
             </div>
           </div>
+          {!topData.length ? <EmptyState message="No data available yet" /> : (
+            <div className="analytics-column-chart" aria-label={`${title} column chart`}>
+              {topData.map((item, index) => {
+                const value = Number(item.value) || 0;
+                const percent = total ? Math.round((value / total) * 100) : 0;
+                const height = Math.max(8, Math.round((value / max) * 100));
+                return (
+                  <div className="analytics-column" key={item._id || `group-${index}`}>
+                    <strong>{value}</strong>
+                    <div className="analytics-column-track">
+                      <span
+                        style={{
+                          height: `${height}%`,
+                          background: colors[index % colors.length]
+                        }}
+                      />
+                    </div>
+                    <em>{percent}%</em>
+                    <small title={item._id || "Unknown"}>{item._id || "Unknown"}</small>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
         {!data.length ? <EmptyState message="No data available yet" /> : (
           <div className="analytics-bars">
@@ -1284,6 +1296,7 @@ function DriveWisePage({ user, initialTab = "drives" }) {
   const [selectedDriveIds, setSelectedDriveIds] = useState([]);
   const [toast, setToast] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null);
+  const [showReportInfo, setShowReportInfo] = useState(false);
 
   const isMaker = user.role === "LIST_MAKER";
 
@@ -1309,7 +1322,8 @@ function DriveWisePage({ user, initialTab = "drives" }) {
       setDrives(await api("/drives"));
       setRequests(await api("/drives/access-requests/list"));
       if (user.role === "HOD") {
-        setStuckOff(await api("/drives/reports/stuck-off"));
+        const stuckOffReport = await api("/drives/reports/stuck-off");
+        setStuckOff(Array.isArray(stuckOffReport) ? stuckOffReport : (stuckOffReport.items || []));
         await loadReports();
       }
     } catch (err) {
@@ -1589,6 +1603,13 @@ function DriveWisePage({ user, initialTab = "drives" }) {
     return totals;
   }, [displayReports, reportMode, reportsList, selectedCompanyFilter]);
 
+  const activeBreakdownSection = useMemo(() => {
+    if (reportMode === "department") return { title: "Department Wise Report", rows: reportOptions.byDepartment || [], keyName: "department" };
+    if (reportMode === "batch") return { title: "Batch Wise Report", rows: reportOptions.byBatch || [], keyName: "batch" };
+    if (reportMode === "stream") return { title: "Stream Wise Report", rows: reportOptions.byProgram || [], keyName: "program" };
+    return null;
+  }, [reportMode, reportOptions.byDepartment, reportOptions.byBatch, reportOptions.byProgram]);
+
   return (
     <>
       <PageHeader 
@@ -1676,9 +1697,14 @@ function DriveWisePage({ user, initialTab = "drives" }) {
       {!isMaker && activeTab === "reports" && (
         <section className="panel reports-panel" style={{ padding: "20px", display: "grid", gap: "24px" }}>
           <div className="reports-heading-row">
-            <div>
-              <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}><BarChart3 size={22} /> Attendance & Selection Representation of Company Processes</h3>
-              <p className="subtle">Comprehensive statistics of present/absent ratios, total eligible students, registered students, and student selections by company drives.</p>
+            <div className="report-title-row">
+              <div>
+                <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}><BarChart3 size={22} /> Attendance & Selection Representation of Company Processes</h3>
+                <p className="subtle">Comprehensive statistics of present/absent ratios, total eligible students, registered students, and student selections by company drives.</p>
+              </div>
+              <button className="soft report-info-button" type="button" onClick={() => setShowReportInfo(true)} title="How report counts work">
+                <Info size={17} /> Count Logic
+              </button>
             </div>
             <div className="report-filter-row">
               <label>Report Type
@@ -1787,17 +1813,9 @@ function DriveWisePage({ user, initialTab = "drives" }) {
             {!displayReports.length && <EmptyState message={`No ${activeReportConfig.title.toLowerCase()} data available for this filter`} />}
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px" }}>
-            <BreakdownCard title="Department Wise" rows={reportOptions.byDepartment || []} labelKey="department" />
-            <BreakdownCard title="Batch Wise" rows={reportOptions.byBatch || []} labelKey="batch" />
-            <BreakdownCard title="Stream Wise" rows={reportOptions.byProgram || []} labelKey="program" />
-          </div>
-
-          <ReportBreakdownTables
-            departmentRows={reportOptions.byDepartment || []}
-            batchRows={reportOptions.byBatch || []}
-            programRows={reportOptions.byProgram || []}
-          />
+          {activeBreakdownSection && (
+            <ReportBreakdownTables sections={[activeBreakdownSection]} />
+          )}
 
           {/* Table Representation matching Image 5 format */}
           <div className="report-table-wrap" style={{ overflowX: "auto" }}>
@@ -1938,25 +1956,41 @@ function DriveWisePage({ user, initialTab = "drives" }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {requests.filter(r => r.status !== "PENDING").map((req) => (
-                    <tr key={req._id} style={{ borderBottom: "1px solid var(--line)" }}>
-                      <td style={{ padding: "8px", textAlign: "left" }}>{new Date(req.approvedAt || req.updatedAt).toLocaleString()}</td>
-                      <td style={{ padding: "8px", textAlign: "left" }}>{req.requester?.name}</td>
-                      <td style={{ padding: "8px", textAlign: "left" }}>{req.drive?.companyName}</td>
-                      <td style={{ padding: "8px", textAlign: "left", fontWeight: "bold" }}>{req.type === "EDIT_SHEET" ? "Edit Sheet" : "Re-upload"}</td>
-                      <td style={{ padding: "8px", textAlign: "center" }}>
-                        <span className="badge" style={{ 
-                          background: req.status === "REJECTED" ? "rgba(235, 87, 87, 0.1)" : "rgba(39, 174, 96, 0.1)", 
-                          color: req.status === "REJECTED" ? "var(--red)" : "var(--green)", 
-                          padding: "2px 6px", borderRadius: "4px" 
-                        }}>
-                          {req.status}
-                        </span>
-                      </td>
-                      <td style={{ padding: "8px", textAlign: "left" }}>{req.requestReason}</td>
-                      <td style={{ padding: "8px", textAlign: "left", color: "var(--muted)" }}>{req.remarks || "-"}</td>
-                    </tr>
-                  ))}
+                  {requests.filter(r => r.status !== "PENDING").map((req) => {
+                    const changes = req.proposedChanges || [];
+                    return (
+                      <tr key={req._id} style={{ borderBottom: "1px solid var(--line)" }}>
+                        <td style={{ padding: "8px", textAlign: "left" }}>{new Date(req.approvedAt || req.updatedAt).toLocaleString()}</td>
+                        <td style={{ padding: "8px", textAlign: "left" }}>{req.requester?.name || "-"}</td>
+                        <td style={{ padding: "8px", textAlign: "left" }}>{req.drive?.companyName || "-"}</td>
+                        <td style={{ padding: "8px", textAlign: "left", fontWeight: "bold" }}>{req.type === "EDIT_SHEET" ? "Edit Sheet" : "Re-upload"}</td>
+                        <td style={{ padding: "8px", textAlign: "center" }}>
+                          <span className="badge" style={{ 
+                            background: req.status === "REJECTED" ? "rgba(235, 87, 87, 0.1)" : "rgba(39, 174, 96, 0.1)", 
+                            color: req.status === "REJECTED" ? "var(--red)" : "var(--green)", 
+                            padding: "2px 6px", borderRadius: "4px" 
+                          }}>
+                            {req.status}
+                          </span>
+                        </td>
+                        <td style={{ padding: "8px", textAlign: "left" }}>
+                          <strong>{req.requestReason}</strong>
+                          {changes.length > 0 && (
+                            <div className="history-change-list">
+                              {changes.slice(0, 4).map((change, index) => (
+                                <span key={`${change.rowIndex}-${change.field}-${index}`}>
+                                  {change.rollNo || "Row"} - {change.field}: "{String(change.oldValue ?? "-")}" to "{String(change.newValue ?? "-")}"
+                                </span>
+                              ))}
+                              {changes.length > 4 && <span>+{changes.length - 4} more update(s)</span>}
+                            </div>
+                          )}
+                          {!changes.length && req.type === "REUPLOAD_SHEET" && <small className="history-change-note">Re-upload permission was requested for the drive attendance sheet.</small>}
+                        </td>
+                        <td style={{ padding: "8px", textAlign: "left", color: "var(--muted)" }}>{req.remarks || "-"}</td>
+                      </tr>
+                    );
+                  })}
                   {requests.filter(r => r.status !== "PENDING").length === 0 && (
                     <tr><td colSpan={7} style={{ textAlign: "center", padding: "20px" }}>No history found</td></tr>
                   )}
@@ -1975,6 +2009,7 @@ function DriveWisePage({ user, initialTab = "drives" }) {
           onError={(message) => setToast({ type: "error", message })}
         />
       )}
+      {showReportInfo && <ReportLogicDialog onClose={() => setShowReportInfo(false)} />}
     </>
   );
 }
@@ -2025,6 +2060,47 @@ function ConfirmDialog({ title, message, confirmLabel = "Confirm", onConfirm, on
   );
 }
 
+function ReportLogicDialog({ onClose }) {
+  return createPortal(
+    <div className="app-dialog-overlay">
+      <div className="app-dialog report-logic-dialog">
+        <div className="report-logic-header">
+          <h3><Info size={18} /> Attendance & Count Logic</h3>
+          <button className="soft icon-button" type="button" onClick={onClose} title="Close"><X size={16} /></button>
+        </div>
+        <div className="report-logic-body">
+          <section>
+            <h4>Attendance Logic</h4>
+            <ul>
+              <li><strong>Overall Present:</strong> a student is counted present when any uploaded process/round is marked Present or Qualified.</li>
+              <li><strong>Overall Absent:</strong> a student is counted absent when they are not registered, or when all uploaded processes are absent/not qualified/disqualified/withdrawn.</li>
+              <li><strong>Pending:</strong> registered students with no uploaded process attendance are not counted as present or absent.</li>
+            </ul>
+          </section>
+          <section>
+            <h4>Report Count Logic</h4>
+            <ul>
+              <li><strong>Total Eligible:</strong> drive-student rows where eligibility status is Eligible.</li>
+              <li><strong>Total Registered:</strong> rows where registration status is Registered.</li>
+              <li><strong>Total Selected:</strong> rows where final outcome is Selected or Placed.</li>
+              <li><strong>Present:</strong> rows with Overall Present after attendance logic is applied.</li>
+              <li><strong>Absent:</strong> rows with Overall Absent after attendance logic is applied.</li>
+              <li><strong>Grand Total:</strong> Present + Absent.</li>
+              <li><strong>Present %:</strong> Present divided by Grand Total.</li>
+              <li><strong>Absent %:</strong> Absent divided by Grand Total.</li>
+            </ul>
+          </section>
+          <p>Department, Batch, Stream, Month, and Company filters recalculate the same counts only for matching student and drive records.</p>
+        </div>
+        <div className="app-dialog-actions">
+          <button type="button" onClick={onClose}>Got it</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function BreakdownCard({ title, rows, labelKey }) {
   const topRows = (rows || []).slice(0, 8);
   const maxValue = Math.max(...topRows.map((row) => row.grandTotal || row.totalEligible || 0), 1);
@@ -2052,13 +2128,7 @@ function BreakdownCard({ title, rows, labelKey }) {
   );
 }
 
-function ReportBreakdownTables({ departmentRows, batchRows, programRows }) {
-  const sections = [
-    { title: "Department Wise Report", rows: departmentRows, keyName: "department" },
-    { title: "Batch Wise Report", rows: batchRows, keyName: "batch" },
-    { title: "Stream Wise Report", rows: programRows, keyName: "program" }
-  ];
-
+function ReportBreakdownTables({ sections }) {
   return (
     <div className="report-breakdown-tables">
       {sections.map((section) => (
@@ -3551,25 +3621,51 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
 }
 
 function StuckOffReport({ items }) {
+  const rows = Array.isArray(items) ? items : [];
   return (
     <section className="panel stuck-report">
       <h3>Struck Off Risk Report</h3>
       <p className="subtle">Not registered means overall absent for that drive. If a registered student is present in any one process, the drive counts as overall present. Students absent in 2 or more drives are shown here for HOD review.</p>
-      {!items.length ? <EmptyState message="No Struck Off risk students yet" /> : (
-        <div className="report-list">
-          {items.map((item) => (
-            <article key={item.student?._id || item.student?.studentId}>
-              <div>
-                <h4>{item.student?.name || "Unknown Student"}</h4>
-                <p>{item.student?.rollNo || item.student?.enrollmentNo || "-"} - {item.student?.department || "-"} - {item.student?.batch || "-"}</p>
-              </div>
-              <strong>{item.absentDriveCount} absent drives</strong>
-              <span>{item.reason}</span>
-              <ul>
-                {item.drives.map((drive, index) => <li key={index}>{drive.companyName || "Drive"}: {drive.reason}</li>)}
-              </ul>
-            </article>
-          ))}
+      {!rows.length ? <EmptyState message="No Struck Off risk students yet" /> : (
+        <div className="stuck-report-table-wrap">
+          <table className="report-table stuck-report-table">
+            <thead>
+              <tr>
+                <th>Student</th>
+                <th>Roll / Enrollment</th>
+                <th>Department</th>
+                <th>Batch</th>
+                <th>Absent Drives</th>
+                <th>Status</th>
+                <th>Drive Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((item) => (
+                <tr key={item.student?._id || item.student?.studentId}>
+                  <td style={{ fontWeight: 800 }}>{item.student?.name || "Unknown Student"}</td>
+                  <td>{item.student?.rollNo || item.student?.enrollmentNo || "-"}</td>
+                  <td>{item.student?.department || "-"}</td>
+                  <td>{item.student?.batch || "-"}</td>
+                  <td style={{ fontWeight: 800 }}>{item.absentDriveCount}</td>
+                  <td>
+                    <span className={`percent-pill ${item.status === "STUCK_OFF" ? "absent" : "present"}`}>
+                      {item.status === "STUCK_OFF" ? "Struck Off" : "Watch"}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="stuck-drive-list">
+                      {(item.drives || []).map((drive, index) => (
+                        <span key={`${drive.companyName}-${index}`}>
+                          <strong>{drive.companyName || "Drive"}</strong>: {drive.overallAttendanceStatus?.replaceAll("_", " ") || "Pending"}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </section>
@@ -3954,7 +4050,10 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
                   <div className="drive-history-main">
                     <div>
                       <strong>{row.drive?.companyName || "Drive"}</strong>
-                      <span>{row.drive?.jobRole || "Role not set"}{row.drive?.createdBy?.name ? ` • Uploaded by ${row.drive.createdBy.name}` : ""}</span>
+                      <span>{row.drive?.jobRole || "Role not set"}{row.drive?.createdBy?.name ? ` - Uploaded by ${row.drive.createdBy.name}` : ""}</span>
+                      {!!row.preparedByNames?.length && (
+                        <span className="officer-line">Placement Officer: {row.preparedByNames.join(", ")}</span>
+                      )}
                     </div>
                     <div className="drive-history-statuses">
                       <span className="status">{row.registrationStatus?.replaceAll("_", " ")}</span>
@@ -3966,7 +4065,6 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
                       <div className="round-chip" key={`${round.roundName}-${index}`}>
                         <span>{round.roundName || `Round ${index + 1}`}</span>
                         <strong className={round.status === "PRESENT" || round.status === "QUALIFIED" ? "present" : round.status === "ABSENT" || round.status === "NOT_QUALIFIED" || round.status === "DISQUALIFIED" ? "absent" : ""}>{round.status?.replaceAll("_", " ") || "Pending"}</strong>
-                        {round.notes && <small>{round.notes}</small>}
                       </div>
                     )) : <div className="round-chip empty-round"><span>No uploaded rounds</span><strong>Pending</strong></div>}
                   </div>
@@ -3976,14 +4074,6 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
               {!filteredDriveRows.length && <EmptyState icon={Search} message="No matching company or round found" />}
             </div>
           )}
-        </section>
-
-        <section className="student-panel">
-          <div className="section-heading">
-            <h3>Additional Information</h3>
-            <p>Unmapped sheet fields preserved for review.</p>
-          </div>
-          <pre>{JSON.stringify(currentStudent.customFields || {}, null, 2)}</pre>
         </section>
 
         {!!restrictionEdits.length && (

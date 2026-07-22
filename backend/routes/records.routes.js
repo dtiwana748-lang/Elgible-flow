@@ -4,6 +4,7 @@ import xlsx from "xlsx";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { Student } from "../models/Student.js";
 import { DriveStudent } from "../models/DriveStudent.js";
+import { AttendanceSheet } from "../models/AttendanceSheet.js";
 import { SpreadsheetConnection } from "../models/SpreadsheetConnection.js";
 import { writeAudit } from "../utils/audit.js";
 import { triggerSpreadsheetUpdate } from "../utils/spreadsheetSync.js";
@@ -184,6 +185,23 @@ router.get("/students/:id", requireAuth, async (req, res) => {
     })
     .sort({ updatedAt: -1 })
     .lean();
+  const driveIds = driveRows.map((row) => row.drive?._id).filter(Boolean);
+  const sheets = driveIds.length
+    ? await AttendanceSheet.find({ drive: { $in: driveIds } })
+      .select("drive preparedByNames")
+      .sort({ createdAt: -1 })
+      .lean()
+    : [];
+  const officersByDrive = sheets.reduce((map, sheet) => {
+    const driveId = sheet.drive?.toString();
+    if (!driveId || map.has(driveId)) return map;
+    map.set(driveId, (sheet.preparedByNames || []).filter(Boolean));
+    return map;
+  }, new Map());
+  const enrichedDriveRows = driveRows.map((row) => ({
+    ...row,
+    preparedByNames: officersByDrive.get(row.drive?._id?.toString()) || []
+  }));
   const driveSummary = driveRows.reduce((summary, row) => {
     summary.totalDrives += 1;
     if (row.eligibilityStatus === "ELIGIBLE") summary.eligibleDrives += 1;
@@ -200,7 +218,7 @@ router.get("/students/:id", requireAuth, async (req, res) => {
     stuckOffStatus: student.driveRestriction?.status || "CLEAR",
     stuckOffReason: student.driveRestriction?.reason || "",
     stuckOffUpdatedAt: student.driveRestriction?.updatedAt || null,
-    driveRows
+    driveRows: enrichedDriveRows
   });
   res.json({ student, driveSummary });
 });
