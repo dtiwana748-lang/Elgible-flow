@@ -3,9 +3,9 @@ import Login from "./pages/Login.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 
 function Shell() {
-  const { user, loading } = useAuth();
+  const { user, loading, authMessage } = useAuth();
   if (loading) return <div className="boot">Loading secure workspace...</div>;
-  return user ? <Dashboard /> : <Login />;
+  return user ? <Dashboard /> : <Login authMessage={authMessage} />;
 }
 
 export default function App() {

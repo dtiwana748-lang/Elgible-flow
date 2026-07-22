@@ -11,9 +11,9 @@ function safeImageUrl(value) {
   }
 }
 
-export default function Login() {
+export default function Login({ authMessage = "" }) {
   const { login } = useAuth();
-  const [form, setForm] = useState({ email: "", password: "", remember: true });
+  const [form, setForm] = useState({ email: "", password: "" });
   const [showPassword, setShowPassword] = useState(false);
   const [imageFailed, setImageFailed] = useState(false);
   const [error, setError] = useState("");
@@ -48,26 +48,20 @@ export default function Login() {
           <h2>Sign in to continue</h2>
         </div>
         <form onSubmit={submit} className="login-form">
+          {authMessage && <p className="notice compact-notice">{authMessage}</p>}
           <label>
             Email address
-            <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+            <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required autoComplete="username" maxLength={254} />
           </label>
           <label>
             Password
             <div className="password-field">
-              <input type={showPassword ? "text" : "password"} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={8} />
+              <input type={showPassword ? "text" : "password"} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={8} maxLength={128} autoComplete="current-password" />
               <button type="button" className="field-icon" onClick={() => setShowPassword((value) => !value)} title={showPassword ? "Hide password" : "Show password"}>
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
           </label>
-          <div className="login-options">
-            <label className="check-row">
-              <input type="checkbox" checked={form.remember} onChange={(e) => setForm({ ...form, remember: e.target.checked })} />
-              Remember me
-            </label>
-            <button type="button" className="link-button">Forgot password</button>
-          </div>
           {error && <p className="error">{error}</p>}
           <button disabled={busy}>
             <LockKeyhole size={18} />

@@ -639,6 +639,13 @@ tbody tr:hover { background: #f8fafc; }
 .student-stat-grid .mini:nth-child(5) { border-top: 5px solid var(--primary); }
 .student-stat-grid .mini:nth-child(6) { border-top: 5px solid var(--yellow); }
 .student-detail-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.override-history-box { background: #f8fbfd; }
+.override-history-box .section-heading h3 svg { color: var(--muted); }
+.override-history-list { display: grid; gap: 10px; text-align: left; }
+.override-history-item { display: grid; gap: 5px; padding: 11px 12px; background: #ffffff; border: 1px solid var(--line); border-radius: 8px; }
+.override-history-item span { color: var(--muted); font-size: 12px; font-weight: 750; }
+.override-history-item p { margin: 0; color: var(--ink); font-size: 13px; line-height: 1.4; }
+.override-history-item em { color: #475569; font-size: 12px; line-height: 1.4; }
 .restriction-form { display: grid; grid-template-columns: minmax(190px, .85fr) minmax(220px, 1fr) minmax(120px, .42fr); gap: 12px; align-items: end; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); min-width: 0; }
 .restriction-form label { min-width: 0; }
 .restriction-form input, .restriction-form select { min-width: 0; }

@@ -67,20 +67,60 @@ async function saveProfileBufferLocally(file, userId) {
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8)
+  password: z.string().min(8).max(128)
 });
 
 const SESSION_IDLE_MS = 12 * 60 * 60 * 1000;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const MAX_LOGIN_ATTEMPTS = 5;
+const loginAttempts = new Map();
+
+function loginKey(req, email) {
+  return `${req.ip || "unknown"}:${String(email || "").toLowerCase()}`;
+}
+
+function isLoginLimited(key) {
+  const record = loginAttempts.get(key);
+  if (!record) return false;
+  if (record.resetAt <= Date.now()) {
+    loginAttempts.delete(key);
+    return false;
+  }
+  return record.count >= MAX_LOGIN_ATTEMPTS;
+}
+
+function recordFailedLogin(key) {
+  const now = Date.now();
+  const record = loginAttempts.get(key);
+  if (!record || record.resetAt <= now) {
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return;
+  }
+  record.count += 1;
+}
 
 router.post("/login", async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: "Valid email and password are required" });
 
-  const user = await User.findOne({ email: parsed.data.email.toLowerCase() }).select("+passwordHash");
-  if (!user || !user.active) return res.status(401).json({ message: "Invalid credentials" });
+  const email = parsed.data.email.toLowerCase();
+  const key = loginKey(req, email);
+  if (isLoginLimited(key)) {
+    return res.status(429).json({ message: "Too many failed login attempts. Please try again after 15 minutes." });
+  }
+
+  const user = await User.findOne({ email }).select("+passwordHash");
+  if (!user || !user.active) {
+    recordFailedLogin(key);
+    return res.status(401).json({ message: "Invalid credentials" });
+  }
 
   const matched = await user.comparePassword(parsed.data.password);
-  if (!matched) return res.status(401).json({ message: "Invalid credentials" });
+  if (!matched) {
+    recordFailedLogin(key);
+    return res.status(401).json({ message: "Invalid credentials" });
+  }
+  loginAttempts.delete(key);
   const sessionId = crypto.randomBytes(24).toString("hex");
   user.lastLoginAt = new Date();
   user.lastSeenAt = new Date();

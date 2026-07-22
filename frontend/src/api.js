@@ -3,8 +3,30 @@ export const API_ORIGIN = API_URL.startsWith("http")
   ? API_URL.replace(/\/api\/?$/, "")
   : window.location.origin;
 
+export class AuthError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "AuthError";
+  }
+}
+
+export function getAuthToken() {
+  return sessionStorage.getItem("eligibleFlowToken");
+}
+
+export function setAuthToken(token) {
+  if (token) sessionStorage.setItem("eligibleFlowToken", token);
+}
+
+export function clearAuthToken(message = "Authentication required") {
+  sessionStorage.removeItem("eligibleFlowToken");
+  localStorage.removeItem("eligibleFlowToken");
+  localStorage.removeItem("token");
+  window.dispatchEvent(new CustomEvent("eligible-flow-auth-expired", { detail: { message } }));
+}
+
 export async function api(path, options = {}) {
-  const token = localStorage.getItem("eligibleFlowToken") || localStorage.getItem("token");
+  const token = getAuthToken();
   const headers = new Headers(options.headers);
   if (!(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -17,11 +39,11 @@ export async function api(path, options = {}) {
   }
   const data = await response.json().catch(() => ({}));
   const refreshedToken = response.headers.get("X-Auth-Token");
-  if (refreshedToken) localStorage.setItem("eligibleFlowToken", refreshedToken);
+  if (refreshedToken) setAuthToken(refreshedToken);
   if (!response.ok) {
     if (response.status === 401) {
-      localStorage.removeItem("eligibleFlowToken");
-      localStorage.removeItem("token");
+      if (path !== "/auth/login") clearAuthToken(data.message || "Authentication required");
+      throw new AuthError(data.message || "Authentication required");
     }
     throw new Error(data.message || "Request failed");
   }

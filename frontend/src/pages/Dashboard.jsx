@@ -778,7 +778,7 @@ function ManagersPage() {
           {["name", "email", "personalEmail"].map((field) => (
             <label key={field}>{labelFor(field)}<input type={field.includes("Email") || field === "email" ? "email" : "text"} value={form[field]} onChange={(e) => setForm({ ...form, [field]: e.target.value })} required={["name", "email"].includes(field)} /></label>
           ))}
-          <label>{editingId ? "New Password (optional)" : "Initial Password"}<input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required={!editingId} minLength={editingId && !form.password ? undefined : 8} /></label>
+          <label>{editingId ? "New Password (optional)" : "Initial Password"}<input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required={!editingId} minLength={editingId && !form.password ? undefined : 8} maxLength={128} autoComplete="new-password" /></label>
           <button><Save size={17} /> {editingId ? "Update List Maker" : "Save List Maker"}</button>
           {editingId && <button className="soft" type="button" onClick={resetManagerForm}><X size={17} /> Cancel</button>}
         </form>
@@ -3620,6 +3620,7 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
     ].join(" ").toLowerCase();
     return text.includes(driveSearch.trim().toLowerCase());
   });
+  const restrictionEdits = (currentStudent.localEdits || []).filter((edit) => edit.field === "driveRestriction.status");
 
   async function saveRestriction(event) {
     event.preventDefault();
@@ -3718,7 +3719,7 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
             {/* HOD Status Override History (Timeline from localEdits) */}
             {(() => {
               const restrictionEdits = (currentStudent.localEdits || []).filter(edit => edit.field === "driveRestriction.status");
-              if (restrictionEdits.length > 0) {
+              if (false && restrictionEdits.length > 0) {
                 return (
                   <div className="override-history-box" style={{ marginTop: "15px", padding: "14px", border: "1px solid var(--line)", borderRadius: "8px", background: "#f8fafc" }}>
                     <h4 style={{ margin: "0 0 8px 0", color: "var(--muted)", fontSize: "12px", display: "flex", alignItems: "center", gap: "6px", fontWeight: "800", textTransform: "uppercase" }}>
@@ -3984,6 +3985,26 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
           </div>
           <pre>{JSON.stringify(currentStudent.customFields || {}, null, 2)}</pre>
         </section>
+
+        {!!restrictionEdits.length && (
+          <section className="student-panel override-history-box">
+            <div className="section-heading">
+              <h3><RefreshCcw size={17} /> Manual Override History</h3>
+              <p>HOD status changes recorded for this student.</p>
+            </div>
+            <div className="override-history-list">
+              {restrictionEdits.map((edit, index) => (
+                <div key={index} className="override-history-item">
+                  <span>{new Date(edit.editedAt).toLocaleString()}</span>
+                  <p>
+                    Changed status to <strong>{edit.newValue}</strong> by <strong>{edit.editedBy?.name || edit.editedBy?.email || "System"}</strong>.
+                  </p>
+                  {edit.reason && <em>Reason: {edit.reason}</em>}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </section>
     </aside>
   );

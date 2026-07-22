@@ -6,10 +6,18 @@ import { writeAudit } from "../utils/audit.js";
 
 const router = Router();
 
+const strongPassword = z.string()
+  .min(8)
+  .max(128)
+  .regex(/[a-z]/, "Password must include a lowercase letter")
+  .regex(/[A-Z]/, "Password must include an uppercase letter")
+  .regex(/[0-9]/, "Password must include a number")
+  .regex(/[^A-Za-z0-9]/, "Password must include a special character");
+
 const createUserSchema = z.object({
   name: z.string().min(2).max(80),
   email: z.string().email(),
-  password: z.string().min(8).max(128),
+  password: strongPassword,
   personalEmail: z.string().email().optional().or(z.literal("")),
   active: z.boolean().optional()
 });
@@ -38,7 +46,7 @@ router.get("/", async (_req, res) => {
 
 router.post("/", async (req, res) => {
   const parsed = createUserSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ message: "User details are invalid" });
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message || "User details are invalid" });
 
   const existing = await User.findOne({ email: parsed.data.email.toLowerCase() });
   if (existing) return res.status(409).json({ message: "Email already exists" });
@@ -101,12 +109,12 @@ const updateUserSchema = z.object({
   email: z.string().email().optional(),
   personalEmail: z.string().email().optional().or(z.literal("")),
   active: z.boolean().optional(),
-  password: z.string().min(8).max(128).optional().or(z.literal(""))
+  password: strongPassword.optional().or(z.literal(""))
 });
 
 router.patch("/:id", async (req, res) => {
   const parsed = updateUserSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ message: "User details are invalid" });
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message || "User details are invalid" });
 
   const user = await User.findById(req.params.id);
   if (!user) return res.status(404).json({ message: "User not found" });
