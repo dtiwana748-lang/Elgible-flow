@@ -73,4 +73,66 @@ router.patch("/:id/status", async (req, res) => {
   res.json({ id: user._id, name: user.name, email: user.email, role: user.role, active: user.active });
 });
 
+router.delete("/:id", async (req, res) => {
+  if (req.params.id === req.user._id.toString()) {
+    return res.status(400).json({ message: "You cannot delete your own account" });
+  }
+
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ message: "User not found" });
+  if (user.role !== "LIST_MAKER") {
+    return res.status(403).json({ message: "Only List Maker accounts can be deleted" });
+  }
+
+  await writeAudit({
+    actor: req.user._id,
+    action: "USER_DELETED",
+    entity: "User",
+    entityId: user._id,
+    metadata: { name: user.name, email: user.email, role: user.role }
+  });
+  await user.deleteOne();
+
+  res.json({ message: "List Maker account deleted" });
+});
+
+const updateUserSchema = z.object({
+  name: z.string().min(2).max(80).optional(),
+  email: z.string().email().optional(),
+  personalEmail: z.string().email().optional().or(z.literal("")),
+  active: z.boolean().optional(),
+  password: z.string().min(8).max(128).optional().or(z.literal(""))
+});
+
+router.patch("/:id", async (req, res) => {
+  const parsed = updateUserSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "User details are invalid" });
+
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ message: "User not found" });
+
+  if (parsed.data.email && parsed.data.email.toLowerCase() !== user.email.toLowerCase()) {
+    const existing = await User.findOne({ email: parsed.data.email.toLowerCase() });
+    if (existing) return res.status(409).json({ message: "Email already exists" });
+    user.email = parsed.data.email;
+  }
+
+  if (parsed.data.name) user.name = parsed.data.name;
+  if (parsed.data.personalEmail !== undefined) user.personalEmail = parsed.data.personalEmail || undefined;
+  if (parsed.data.active !== undefined) {
+    if (req.params.id === req.user._id.toString() && !parsed.data.active) {
+      return res.status(400).json({ message: "You cannot deactivate your own account" });
+    }
+    user.active = parsed.data.active;
+  }
+
+  if (parsed.data.password) {
+    user.passwordHash = await User.hashPassword(parsed.data.password);
+  }
+
+  await user.save();
+  await writeAudit({ actor: req.user._id, action: "USER_UPDATED", entity: "User", entityId: user._id });
+  res.json({ id: user._id, name: user.name, email: user.email, role: user.role, active: user.active, personalEmail: user.personalEmail });
+});
+
 export default router;

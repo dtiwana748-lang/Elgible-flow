@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
-  BarChart3, Bell, BriefcaseBusiness, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
-  FileDown, Gauge, GraduationCap, Home, LayoutDashboard, ListChecks, LogOut, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, UserCog, UserPlus, Users, UsersRound
+  BarChart3, Bell, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
+  FileDown, Gauge, GraduationCap, Home, LayoutDashboard, ListChecks, LogOut, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users, UsersRound, X
 } from "lucide-react";
 import { api, API_URL } from "../api.js";
 import { assetUrl } from "../api.js";
@@ -55,9 +56,28 @@ function formatCgpa(value) {
   return number.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function formatDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "-";
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function safeNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
 export default function Dashboard() {
   const { user, logout } = useAuth();
   const [active, setActive] = useState("dashboard");
+  const [driveInitialTab, setDriveInitialTab] = useState("drives");
   const [selectedEligibilityList, setSelectedEligibilityList] = useState(null);
   const isHod = user.role === "HOD";
   const nav = isHod ? hodNav : makerNav;
@@ -66,14 +86,14 @@ export default function Dashboard() {
     <main className="app-shell">
       <RoleSidebar nav={nav} active={active} setActive={setActive} user={user} logout={logout} />
       <section className="workspace">
-        {active === "dashboard" && <DashboardHome user={user} setActive={setActive} />}
+        {active === "dashboard" && <DashboardHome user={user} setActive={setActive} setDriveInitialTab={setDriveInitialTab} />}
         {active === "managers" && isHod && <ManagersPage />}
         {active === "records" && isHod && <RecordsPage />}
         {active === "eligibility" && <EligibilityListsPage setSelectedList={setSelectedEligibilityList} setActive={setActive} isHod={isHod} />}
         {active === "create-eligibility" && !isHod && <CreateEligibilityListPage onComplete={(list) => { setSelectedEligibilityList(list); setActive("eligibility"); }} />}
         {active === "view-eligibility" && selectedEligibilityList && <EligibilityListDetailPage list={selectedEligibilityList} back={() => setActive("eligibility")} isHod={isHod} />}
         {active === "master-data" && !isHod && <MasterDataReadOnlyPage />}
-        {active === "drives" && <DriveWisePage user={user} />}
+        {active === "drives" && <DriveWisePage user={user} initialTab={driveInitialTab} />}
         {active === "profile" && <ProfilePage user={user} />}
       </section>
     </main>
@@ -152,9 +172,10 @@ function PageHeader({ eyebrow, title, subtitle, children }) {
   );
 }
 
-function DashboardHome({ user, setActive }) {
+function DashboardHome({ user, setActive, setDriveInitialTab }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [pendingAccessCount, setPendingAccessCount] = useState(0);
   const [students, setStudents] = useState({ items: [], total: 0 });
   const [studentError, setStudentError] = useState("");
   const [studentFilters, setStudentFilters] = useState({ search: "", department: "", course: "", program: "", batch: "", semester: "" });
@@ -164,7 +185,12 @@ function DashboardHome({ user, setActive }) {
   async function load() {
     setError("");
     try {
-      setData(await api("/dashboard/summary"));
+      const summary = await api("/dashboard/summary");
+      setData(summary);
+      if (user.role === "HOD") {
+        const requests = await api("/drives/access-requests/list");
+        setPendingAccessCount((requests || []).filter((request) => request.status === "PENDING").length);
+      }
     } catch (err) {
       setError(err.message);
     }
@@ -209,16 +235,19 @@ function DashboardHome({ user, setActive }) {
       method: "PATCH",
       body: JSON.stringify({ status, reason })
     });
-    setSelected((current) => ({
-      ...current,
-      student: updated,
-      driveSummary: {
-        ...(current.driveSummary || {}),
-        stuckOffStatus: updated.driveRestriction?.status || "CLEAR",
-        stuckOffReason: updated.driveRestriction?.reason || "",
-        stuckOffUpdatedAt: updated.driveRestriction?.updatedAt || null
-      }
-    }));
+    setSelected((current) => {
+      const base = current || {};
+      return {
+        ...base,
+        student: updated,
+        driveSummary: {
+          ...(base.driveSummary || {}),
+          stuckOffStatus: updated.driveRestriction?.status || "CLEAR",
+          stuckOffReason: updated.driveRestriction?.reason || "",
+          stuckOffUpdatedAt: updated.driveRestriction?.updatedAt || null
+        }
+      };
+    });
     searchStudents();
   }
 
@@ -257,6 +286,9 @@ function DashboardHome({ user, setActive }) {
     const lmStats = stats || {};
     const totalChecked = lmStats.totalCheckedStudents || 0;
     const totalEligible = lmStats.totalEligibleStudents || 0;
+    const eligibilityRatio = safeNumber(lmStats.eligibilityRatio);
+    const registeredRatio = safeNumber(lmStats.registeredRatio);
+    const presentRate = safeNumber(lmStats.presentRate);
     return (
       <>
         <PageHeader
@@ -279,19 +311,19 @@ function DashboardHome({ user, setActive }) {
           <StatCard 
             icon={Percent} 
             label="Eligibility Ratio" 
-            value={`${lmStats.eligibilityRatio || 0}%`} 
+            value={`${eligibilityRatio}%`} 
             support="Eligible / Checked students" 
           />
           <StatCard 
             icon={CheckCircle2} 
             label="Registration Ratio" 
-            value={`${lmStats.registeredRatio || 0}%`} 
+            value={`${registeredRatio}%`} 
             support="Registered / Eligible students" 
           />
           <StatCard 
             icon={Users} 
             label="Drive Present Rate" 
-            value={`${lmStats.presentRate || 0}%`} 
+            value={`${presentRate}%`} 
             support="Present / Registered students" 
           />
         </section>
@@ -302,8 +334,8 @@ function DashboardHome({ user, setActive }) {
           <div className="panel chart-panel" style={{ margin: 0, padding: "20px", display: "grid", gap: "16px", borderTop: "4px solid var(--green)" }}>
             <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "var(--ink)", textAlign: "left" }}>Overall Eligibility Rate</h3>
             <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "16px", alignItems: "center" }}>
-              <div className="donut-chart" style={{ width: "110px", height: "110px", background: `conic-gradient(var(--green) ${lmStats.eligibilityRatio || 0}%, var(--red) ${lmStats.eligibilityRatio || 0}% 100%)` }}>
-                <span style={{ fontSize: "20px", fontWeight: "900" }}>{lmStats.eligibilityRatio || 0}%</span>
+              <div className="donut-chart" style={{ width: "110px", height: "110px", background: `conic-gradient(var(--green) ${eligibilityRatio}%, var(--red) ${eligibilityRatio}% 100%)` }}>
+                <span style={{ fontSize: "20px", fontWeight: "900" }}>{eligibilityRatio}%</span>
                 <small style={{ fontSize: "9px", fontWeight: "800", color: "var(--muted)", textTransform: "uppercase" }}>Eligible</small>
               </div>
               <div style={{ display: "grid", gap: "8px", fontSize: "13px", textAlign: "left" }}>
@@ -323,8 +355,8 @@ function DashboardHome({ user, setActive }) {
           <div className="panel chart-panel" style={{ margin: 0, padding: "20px", display: "grid", gap: "16px", borderTop: "4px solid var(--blue)" }}>
             <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "var(--ink)", textAlign: "left" }}>Overall Registration Rate</h3>
             <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "16px", alignItems: "center" }}>
-              <div className="donut-chart" style={{ width: "110px", height: "110px", background: `conic-gradient(var(--blue) ${lmStats.registeredRatio || 0}%, #e2e8f0 ${lmStats.registeredRatio || 0}% 100%)` }}>
-                <span style={{ fontSize: "20px", fontWeight: "900" }}>{lmStats.registeredRatio || 0}%</span>
+              <div className="donut-chart" style={{ width: "110px", height: "110px", background: `conic-gradient(var(--blue) ${registeredRatio}%, #e2e8f0 ${registeredRatio}% 100%)` }}>
+                <span style={{ fontSize: "20px", fontWeight: "900" }}>{registeredRatio}%</span>
                 <small style={{ fontSize: "9px", fontWeight: "800", color: "var(--muted)", textTransform: "uppercase" }}>Registered</small>
               </div>
               <div style={{ display: "grid", gap: "8px", fontSize: "13px", textAlign: "left" }}>
@@ -344,8 +376,8 @@ function DashboardHome({ user, setActive }) {
           <div className="panel chart-panel" style={{ margin: 0, padding: "20px", display: "grid", gap: "16px", borderTop: "4px solid var(--orange)" }}>
             <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "800", color: "var(--ink)", textAlign: "left" }}>Overall Attendance Rate</h3>
             <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "16px", alignItems: "center" }}>
-              <div className="donut-chart" style={{ width: "110px", height: "110px", background: `conic-gradient(var(--green) ${lmStats.presentRate || 0}%, var(--red) ${lmStats.presentRate || 0}% 100%)` }}>
-                <span style={{ fontSize: "20px", fontWeight: "900" }}>{lmStats.presentRate || 0}%</span>
+              <div className="donut-chart" style={{ width: "110px", height: "110px", background: `conic-gradient(var(--green) ${presentRate}%, var(--red) ${presentRate}% 100%)` }}>
+                <span style={{ fontSize: "20px", fontWeight: "900" }}>{presentRate}%</span>
                 <small style={{ fontSize: "9px", fontWeight: "800", color: "var(--muted)", textTransform: "uppercase" }}>Present</small>
               </div>
               <div style={{ display: "grid", gap: "8px", fontSize: "13px", textAlign: "left" }}>
@@ -366,27 +398,6 @@ function DashboardHome({ user, setActive }) {
           </div>
         </section>
 
-        {/* Recent Activities Panel */}
-        <section className="panel" style={{ marginTop: "20px" }}>
-          <h3 style={{ margin: "0 0 16px 0", textAlign: "left" }}>Your Recent Activity Logs</h3>
-          <div className="activity-timeline" style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-            {!(data?.recentActivity || []).length ? <p style={{ color: "var(--muted)", margin: 0 }}>No recent activities logged</p> : (
-              (data.recentActivity).map((act, index) => (
-                <div key={act._id || index} style={{ display: "flex", gap: "12px", borderBottom: "1px solid var(--line)", paddingBottom: "10px", fontSize: "14px", textAlign: "left" }}>
-                  <span className="badge" style={{ alignSelf: "flex-start", background: "var(--line)", color: "var(--ink)", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold" }}>
-                    {new Date(act.createdAt).toLocaleTimeString()}
-                  </span>
-                  <div>
-                    <strong>{act.action.replaceAll("_", " ")}</strong>
-                    <p style={{ margin: "2px 0 0 0", color: "var(--muted)", fontSize: "12px" }}>
-                      Entity: {act.entity} {act.metadata?.listName ? `- ${act.metadata.listName}` : ""} {act.metadata?.totalEligible !== undefined ? `(Total Eligible: ${act.metadata.totalEligible})` : ""}
-                    </p>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
         {selected && <StudentDrawer payload={selected} close={() => setSelected(null)} onUpdateRestriction={updateSelectedRestriction} />}
       </>
     );
@@ -399,55 +410,77 @@ function DashboardHome({ user, setActive }) {
         title="Dashboard"
         subtitle={isHod ? "" : "Drive workspace and eligibility workflow"}
       >
-        <button className="icon-button soft" title="Notifications"><Bell size={18} /></button>
+        <button
+          className={`icon-button soft notification-button ${pendingAccessCount ? "has-alert" : ""}`}
+          title={pendingAccessCount ? `${pendingAccessCount} pending access request${pendingAccessCount === 1 ? "" : "s"}` : "No pending access requests"}
+          onClick={() => {
+            setDriveInitialTab?.("requests");
+            setActive("drives");
+          }}
+        >
+          <Bell size={18} />
+          {!!pendingAccessCount && <span>{pendingAccessCount}</span>}
+        </button>
         <button onClick={load}><RefreshCcw size={17} /> Refresh</button>
       </PageHeader>
       {error && <ErrorState message={error} />}
-      <section className="session-strip">
-        <CalendarDays size={20} />
-        <span>Current academic session: <strong>2026-27</strong></span>
-      </section>
-
       {/* Feature Quick Launchpad */}
-      <section className="panel feature-launchpad" style={{ padding: "20px", display: "grid", gap: "16px", marginBottom: "20px", background: "linear-gradient(135deg, var(--light-bg) 0%, rgba(59, 130, 246, 0.05) 100%)", border: "1px solid var(--line)" }}>
-        <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}><Sparkles size={18} style={{ color: "var(--orange)" }} /> Feature Quick Launchpad</h3>
-        <p className="subtle" style={{ margin: 0 }}>Access new features directly, including backlog filters, sheet approvals, reports, and Google Sheets bi-directional sync setup.</p>
+      <section className="panel feature-launchpad hod-feature-panel">
+        <div className="feature-launchpad-heading">
+          <h3><Sparkles size={18} /> Feature Quick Launchpad</h3>
+          <p className="subtle">Access new features directly, including backlog filters, sheet approvals, reports, and Google Sheets bi-directional sync setup.</p>
+        </div>
         
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px", marginTop: "8px" }}>
+        <div className={`quick-launch-grid ${isHod ? "quick-launch-grid-three" : "quick-launch-grid-two"}`}>
           {isHod ? (
             <>
-              <div onClick={() => setActive("drives")} style={{ cursor: "pointer", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", background: "white", transition: "transform 0.2s" }} className="hover-lift">
-                <h4 style={{ margin: "0 0 4px 0", color: "var(--blue)" }}>Drives & Reports</h4>
-                <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>View drive statistics, selections, and Image 5 style attendance sheets.</p>
-              </div>
-              <div onClick={() => setActive("records")} style={{ cursor: "pointer", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", background: "white", transition: "transform 0.2s" }} className="hover-lift">
-                <h4 style={{ margin: "0 0 4px 0", color: "var(--orange)" }}>Bi-Directional Sync</h4>
-                <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>Configure Google Apps Script Web App for real-time sheet write-backs.</p>
-              </div>
-              <div onClick={() => setActive("eligibility")} style={{ cursor: "pointer", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", background: "white", transition: "transform 0.2s" }} className="hover-lift">
-                <h4 style={{ margin: "0 0 4px 0", color: "var(--green)" }}>Eligibility Lists</h4>
-                <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>Review eligibility lists and finalize them for the placement office.</p>
-              </div>
+              <button type="button" onClick={() => setActive("drives")} className="quick-launch-card quick-launch-blue">
+                <BriefcaseBusiness size={20} />
+                <span>
+                  <strong>Drives & Reports</strong>
+                  <small>Drive statistics, selections, and attendance sheets</small>
+                </span>
+              </button>
+              <button type="button" onClick={() => setActive("records")} className="quick-launch-card quick-launch-orange">
+                <Settings2 size={20} />
+                <span>
+                  <strong>Bi-Directional Sync</strong>
+                  <small>Configure real-time Google Sheets write-backs</small>
+                </span>
+              </button>
+              <button type="button" onClick={() => setActive("eligibility")} className="quick-launch-card quick-launch-green">
+                <ListChecks size={20} />
+                <span>
+                  <strong>Eligibility Lists</strong>
+                  <small>Review and finalize placement office lists</small>
+                </span>
+              </button>
             </>
           ) : (
             <>
-              <div onClick={() => setActive("eligibility")} style={{ cursor: "pointer", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", background: "white", transition: "transform 0.2s" }} className="hover-lift">
-                <h4 style={{ margin: "0 0 4px 0", color: "var(--blue)" }}>Create Eligibility List</h4>
-                <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>Use the new <strong>Active Backlogs Max</strong> filter for flexible student shortlists.</p>
-              </div>
-              <div onClick={() => setActive("drives")} style={{ cursor: "pointer", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", background: "white", transition: "transform 0.2s" }} className="hover-lift">
-                <h4 style={{ margin: "0 0 4px 0", color: "var(--orange)" }}>Edit Sheets & Re-upload</h4>
-                <p style={{ margin: 0, fontSize: "12px", color: "var(--muted)" }}>Edit uploaded spreadsheets or request re-upload access from HOD.</p>
-              </div>
+              <button type="button" onClick={() => setActive("eligibility")} className="quick-launch-card quick-launch-blue">
+                <ListChecks size={20} />
+                <span>
+                  <strong>Create Eligibility List</strong>
+                  <small>Use Active Backlogs Max for flexible shortlists</small>
+                </span>
+              </button>
+              <button type="button" onClick={() => setActive("drives")} className="quick-launch-card quick-launch-orange">
+                <FileSpreadsheet size={20} />
+                <span>
+                  <strong>Edit Sheets & Re-upload</strong>
+                  <small>Edit spreadsheets or request re-upload access</small>
+                </span>
+              </button>
             </>
           )}
         </div>
       </section>
       <section className="metrics wide">
-        <StatCard icon={FileSpreadsheet} label="Total Student Records" value={stats.totalStudents || 0} support="All synced master records" onClick={() => setActive("records")} />
-        <StatCard icon={CheckCircle2} label="Total Active" value={stats.totalActive || 0} support="Active students in sheet" />
-        <StatCard icon={ShieldCheck} label="Total Stuck Off" value={stats.totalStuckOff || 0} support="Stuck off students" />
-        <StatCard icon={Gauge} label="Students with NOC" value={stats.totalNoc || 0} support="Students having NOC status" />
+        <StatCard icon={FileSpreadsheet} label="Total Student Records" value={stats.totalStudents || 0} support="All synced master records" maxValue={stats.totalStudents || 0} onClick={() => setActive("records")} />
+        <StatCard icon={CheckCircle2} label="Total Active" value={stats.totalActive || 0} support="Active students in sheet" maxValue={stats.totalStudents || 0} />
+        <StatCard icon={ShieldCheck} label="Total Struck Off" value={stats.totalStuckOff || 0} support="Status column marked Struck Off" maxValue={stats.totalStudents || 0} />
+        <StatCard icon={Gauge} label="Students with NOC" value={stats.totalNoc || 0} support="Students having NOC status" maxValue={stats.totalStudents || 0} />
       </section>
       {isHod && (
         <StudentSearchPanel
@@ -597,13 +630,27 @@ function StudentSearchPanel({ filters, setFilters, options, students, error, onS
   );
 }
 
-function StatCard({ icon: Icon, label, value, support, onClick }) {
+function StatCard({ icon: Icon, label, value, support, maxValue, onClick }) {
+  const displayValue = typeof value === "string" && value.trim().endsWith("%")
+    ? value
+    : Number.isFinite(Number(value))
+      ? Number(value).toLocaleString()
+      : "0";
+  const numericValue = Number(value) || 0;
+  const numericMax = Number(maxValue) || numericValue || 1;
+  const progress = Math.max(0, Math.min(100, Math.round((numericValue / numericMax) * 100)));
+
   return (
     <button className="metric stat-card" onClick={onClick} type="button">
-      <Icon size={20} />
-      <span>{label}</span>
-      <strong>{Number(value).toLocaleString()}</strong>
-      <small>{support}</small>
+      <div className="metric-icon"><Icon size={18} /></div>
+      <div className="metric-copy">
+        <span>{label}</span>
+        <strong>{displayValue}</strong>
+        <small>{support}</small>
+      </div>
+      <div className="metric-progress" aria-hidden="true">
+        <b style={{ width: `${progress}%` }} />
+      </div>
       <Icon className="metric-watermark" size={86} />
     </button>
   );
@@ -645,6 +692,9 @@ function SimpleChart({ title, data = [], onViewAll }) {
                   <span>{item._id || "Unknown"}</span>
                   <strong>{value}</strong>
                   <small>{percent}%</small>
+                  <div className="legend-track" aria-hidden="true">
+                    <b style={{ width: `${percent}%`, background: colors[index % colors.length] }} />
+                  </div>
                 </div>
               );
             })}
@@ -659,6 +709,7 @@ function SimpleChart({ title, data = [], onViewAll }) {
 function ManagersPage() {
   const [managers, setManagers] = useState([]);
   const [form, setForm] = useState({ name: "", email: "", personalEmail: "", password: "" });
+  const [editingId, setEditingId] = useState("");
   const [message, setMessage] = useState("");
 
   async function load() {
@@ -666,14 +717,52 @@ function ManagersPage() {
   }
   useEffect(() => { load(); }, []);
 
-  async function createManager(event) {
-    event.preventDefault();
-    await api("/users", {
-      method: "POST",
-      body: JSON.stringify(form)
-    });
+  function resetManagerForm() {
     setForm({ name: "", email: "", personalEmail: "", password: "" });
-    setMessage("Manager account created as LIST_MAKER");
+    setEditingId("");
+  }
+
+  function editManager(manager) {
+    setEditingId(manager.id);
+    setForm({
+      name: manager.name || "",
+      email: manager.email || "",
+      personalEmail: manager.personalEmail || "",
+      password: ""
+    });
+    setMessage("");
+  }
+
+  async function saveManager(event) {
+    event.preventDefault();
+    const payload = { ...form };
+    if (!payload.password) delete payload.password;
+    await api(editingId ? `/users/${editingId}` : "/users", {
+      method: editingId ? "PATCH" : "POST",
+      body: JSON.stringify(payload)
+    });
+    const wasEditing = Boolean(editingId);
+    resetManagerForm();
+    setMessage(wasEditing ? "Manager account updated" : "Manager account created as LIST_MAKER");
+    load();
+  }
+
+  async function toggleManager(manager) {
+    await api(`/users/${manager.id}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ active: !manager.active })
+    });
+    setMessage(`${manager.name} is now ${manager.active ? "inactive" : "active"}`);
+    load();
+  }
+
+  async function deleteManager(manager) {
+    const confirmed = window.confirm(`Delete ${manager.name}'s List Maker account? This removes login access but keeps historical records.`);
+    if (!confirmed) return;
+
+    await api(`/users/${manager.id}`, { method: "DELETE" });
+    if (editingId === manager.id) resetManagerForm();
+    setMessage(`${manager.name}'s account was deleted`);
     load();
   }
 
@@ -684,13 +773,14 @@ function ManagersPage() {
       </PageHeader>
       {message && <div className="notice">{message}</div>}
       <section className="panel">
-        <h3>Create Manager</h3>
-        <form className="manager-simple-form" onSubmit={createManager}>
+        <h3>{editingId ? "Edit Manager" : "Create Manager"}</h3>
+        <form className="manager-simple-form" onSubmit={saveManager}>
           {["name", "email", "personalEmail"].map((field) => (
             <label key={field}>{labelFor(field)}<input type={field.includes("Email") || field === "email" ? "email" : "text"} value={form[field]} onChange={(e) => setForm({ ...form, [field]: e.target.value })} required={["name", "email"].includes(field)} /></label>
           ))}
-          <label>Initial Password<input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={8} /></label>
-          <button><UserPlus size={17} /> Save List Maker</button>
+          <label>{editingId ? "New Password (optional)" : "Initial Password"}<input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required={!editingId} minLength={editingId && !form.password ? undefined : 8} /></label>
+          <button><Save size={17} /> {editingId ? "Update List Maker" : "Save List Maker"}</button>
+          {editingId && <button className="soft" type="button" onClick={resetManagerForm}><X size={17} /> Cancel</button>}
         </form>
       </section>
 
@@ -699,10 +789,11 @@ function ManagersPage() {
           <UsersRound size={18} /> Registered List Makers
         </h3>
         <DataTable
-          columns={["Name", "Official Email", "Personal Email", "Status", "Last Login", "Created"]}
+          className="managers-table"
+          columns={["Name", "Official Email", "Personal Email", "Status", "Last Login", "Created", "Actions"]}
           rows={managers.map((m) => [
-            <div key={m.id} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <div className="header-profile" style={{ width: "30px", height: "30px", border: "1px solid var(--line)" }} title={m.name}>
+            <div key={m.id} className="manager-name-cell">
+              <div className="header-profile manager-avatar" title={m.name}>
                 {m.profileImage ? <img src={assetUrl(m.profileImage)} alt="" /> : <span style={{ fontSize: "12px" }}>{m.name.slice(0, 1).toUpperCase()}</span>}
               </div>
               <strong>{m.name}</strong>
@@ -711,7 +802,12 @@ function ManagersPage() {
             m.personalEmail || "-",
             <span key={`${m.id}-status`} className={`status ${m.active ? "approved" : "rejected"}`}>{m.active ? "Active" : "Inactive"}</span>,
             m.lastLoginAt ? new Date(m.lastLoginAt).toLocaleString() : "-",
-            new Date(m.createdAt).toLocaleDateString()
+            new Date(m.createdAt).toLocaleDateString(),
+            <div key={`${m.id}-actions`} className="manager-actions">
+              <button className="soft manager-action-btn" onClick={() => editManager(m)}><Settings2 size={14} /> Edit</button>
+              <button className={`manager-action-btn ${m.active ? "soft danger-action" : "soft"}`} onClick={() => toggleManager(m)}>{m.active ? "Deactivate" : "Activate"}</button>
+              <button className="soft danger-action manager-action-btn" onClick={() => deleteManager(m)}><Trash2 size={14} /> Delete</button>
+            </div>
           ])}
         />
       </section>
@@ -734,6 +830,7 @@ function RecordsPage() {
   const [loadError, setLoadError] = useState("");
   const [syncResult, setSyncResult] = useState(null);
   const [showSyncGuide, setShowSyncGuide] = useState(false);
+  const [confirmAction, setConfirmAction] = useState(null);
 
   const query = useMemo(() => new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== "")).toString(), [filters]);
 
@@ -851,25 +948,29 @@ function RecordsPage() {
     loadStudents();
   }
   async function deleteConnection(id) {
-    if (!window.confirm("Are you sure you want to disconnect this spreadsheet?")) return;
-    try {
-      const data = await api(`/spreadsheets/connection/${id}`, { method: "DELETE" });
-      setMessage(data.message);
-      await loadConnection();
-    } catch (error) {
-      setMessage(error.message || "Failed to delete connection");
-    }
+    setConfirmAction({
+      title: "Disconnect Spreadsheet",
+      message: "Disconnect this spreadsheet? Students from this connection will be removed from the active records view.",
+      confirmLabel: "Disconnect",
+      onConfirm: async () => {
+        const data = await api(`/spreadsheets/connection/${id}`, { method: "DELETE" });
+        setMessage(data.message);
+        await loadConnection();
+      }
+    });
   }
 
   async function clearAllStudents() {
-    if (!window.confirm("Are you sure you want to delete ALL students? This cannot be undone!")) return;
-    try {
-      const data = await api("/records/students", { method: "DELETE" });
-      setMessage(data.message);
-      loadStudents();
-    } catch (error) {
-      setMessage(error.message || "Failed to clear students");
-    }
+    setConfirmAction({
+      title: "Clear All Students",
+      message: "Delete all student records from the website? This cannot be undone.",
+      confirmLabel: "Clear Students",
+      onConfirm: async () => {
+        const data = await api("/records/students", { method: "DELETE" });
+        setMessage(data.message);
+        loadStudents();
+      }
+    });
   }
   async function viewStudent(id) {
     setSelected(await api(`/records/students/${id}`));
@@ -882,16 +983,19 @@ function RecordsPage() {
       method: "PATCH",
       body: JSON.stringify({ status, reason })
     });
-    setSelected((current) => ({
-      ...current,
-      student: updated,
-      driveSummary: {
-        ...(current.driveSummary || {}),
-        stuckOffStatus: updated.driveRestriction?.status || "CLEAR",
-        stuckOffReason: updated.driveRestriction?.reason || "",
-        stuckOffUpdatedAt: updated.driveRestriction?.updatedAt || null
-      }
-    }));
+    setSelected((current) => {
+      const base = current || {};
+      return {
+        ...base,
+        student: updated,
+        driveSummary: {
+          ...(base.driveSummary || {}),
+          stuckOffStatus: updated.driveRestriction?.status || "CLEAR",
+          stuckOffReason: updated.driveRestriction?.reason || "",
+          stuckOffUpdatedAt: updated.driveRestriction?.updatedAt || null
+        }
+      };
+    });
     loadStudents();
   }
 
@@ -943,7 +1047,7 @@ function RecordsPage() {
 
         <div className="system-column-note" style={{ marginTop: "20px" }}>
           <ShieldCheck size={17} />
-          <span>Stuck Off is maintained by Eligibility Flow from drive attendance logic and shown here as Yes or No.</span>
+          <span>Struck Off is maintained by Eligibility Flow from drive attendance logic and shown here as Yes or No.</span>
         </div>
 
         <div className="connection-form-section" style={{ marginTop: "25px", borderTop: "1px solid #e2e8f0", paddingTop: "20px" }}>
@@ -1064,7 +1168,7 @@ function RecordsPage() {
                 "Phone", "Father's Phone", "Domicile City", "Domicile State", "Address", "College", "Branch", "Specialization", "Program", "Course", 
                 "Semester", "CGPA", "Attendance", "10th %", "10th Year", "12th %", "12th Year", "Graduation %", "PG Streams", 
                 "Sem 1 %", "Sem 2 %", "Sem 3 %", "Sem 4 %", "Sem 5 %", "Sem 6 %", "Sem 7 %", "Sem 8 %", 
-                "Backlogs", "Resume", "Stuck Off", "Actions"
+                "Backlogs", "Resume", "Struck Off", "Actions"
               ].map((col, i) => (
                 <th key={i} style={{ 
                   padding: "10px 12px", 
@@ -1142,6 +1246,14 @@ function RecordsPage() {
         <button disabled={filters.page >= students.pages} onClick={() => setFilters({ ...filters, page: filters.page + 1 })}>Next</button>
       </div>
       {selected && <StudentDrawer payload={selected} close={() => setSelected(null)} onUpdateRestriction={updateSelectedRestriction} />}
+      {confirmAction && (
+        <ConfirmDialog
+          {...confirmAction}
+          onCancel={() => setConfirmAction(null)}
+          onDone={() => setConfirmAction(null)}
+          onError={(errorMessage) => setMessage(errorMessage)}
+        />
+      )}
       {!!logs.length && <section className="panel"><h3>Sync History</h3><ActivityTimeline items={logs.map((log) => ({ action: `Sync ${log.status}`, createdAt: log.createdAt, metadata: log.summary }))} /></section>}
     </>
   );
@@ -1157,16 +1269,21 @@ function FilterBar({ filters, setFilters }) {
   );
 }
 
-function DriveWisePage({ user }) {
+function DriveWisePage({ user, initialTab = "drives" }) {
   const [drives, setDrives] = useState([]);
   const [stuckOff, setStuckOff] = useState([]);
   const [requests, setRequests] = useState([]);
   const [reports, setReports] = useState([]);
-  const [activeTab, setActiveTab] = useState("drives"); // drives, reports, requests
+  const [activeTab, setActiveTab] = useState(initialTab || "drives"); // drives, reports, requests
+  const [reportMode, setReportMode] = useState("company");
   const [selectedCompanyFilter, setSelectedCompanyFilter] = useState("ALL");
+  const [reportFilters, setReportFilters] = useState({ department: "ALL", batch: "ALL", program: "ALL", month: "ALL" });
   const [driveSearch, setDriveSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [decisionNotes, setDecisionNotes] = useState({});
+  const [selectedDriveIds, setSelectedDriveIds] = useState([]);
+  const [toast, setToast] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null);
 
   const isMaker = user.role === "LIST_MAKER";
 
@@ -1174,6 +1291,17 @@ function DriveWisePage({ user }) {
     const text = [drive.companyName, drive.jobRole, drive.packageCtc, drive.driveType].join(" ").toLowerCase();
     return text.includes(driveSearch.trim().toLowerCase());
   });
+  const filteredDriveIds = filteredDrives.map((drive) => drive._id);
+  const allFilteredSelected = filteredDriveIds.length > 0 && filteredDriveIds.every((id) => selectedDriveIds.includes(id));
+
+  async function loadReports(nextFilters = reportFilters) {
+    const query = new URLSearchParams(
+      Object.entries(nextFilters).filter(([, value]) => value && value !== "ALL")
+    ).toString();
+    const data = await api(`/drives/reports/drives-summary${query ? `?${query}` : ""}`);
+    setReports(data);
+    setSelectedCompanyFilter("ALL");
+  }
 
   async function load() {
     setLoading(true);
@@ -1182,7 +1310,7 @@ function DriveWisePage({ user }) {
       setRequests(await api("/drives/access-requests/list"));
       if (user.role === "HOD") {
         setStuckOff(await api("/drives/reports/stuck-off"));
-        setReports(await api("/drives/reports/drives-summary"));
+        await loadReports();
       }
     } catch (err) {
       console.error("Error loading drives page data:", err);
@@ -1195,6 +1323,14 @@ function DriveWisePage({ user }) {
     load();
   }, []);
 
+  useEffect(() => {
+    setActiveTab(initialTab || "drives");
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (user.role === "HOD" && activeTab === "reports") loadReports();
+  }, [reportFilters.department, reportFilters.batch, reportFilters.program, reportFilters.month, activeTab]);
+
   async function handleDecision(requestId, decision) {
     const remarks = decisionNotes[requestId] || "";
     try {
@@ -1203,22 +1339,243 @@ function DriveWisePage({ user }) {
         body: JSON.stringify({ decision, remarks })
       });
       setDecisionNotes({ ...decisionNotes, [requestId]: "" });
+      setToast({ type: "success", message: `Request ${decision.toLowerCase()} successfully.` });
       load();
     } catch (err) {
-      alert("Error submitting decision: " + err.message);
+      setToast({ type: "error", message: `Unable to submit decision: ${err.message}` });
     }
   }
 
+  async function handleDeleteDrive(drive) {
+    setConfirmAction({
+      title: "Delete Drive",
+      message: `Delete ${drive.companyName}? This removes the drive and its attendance rows from the website.`,
+      confirmLabel: "Delete Drive",
+      onConfirm: async () => {
+        await api(`/drives/${drive._id}`, { method: "DELETE" });
+        setDrives((current) => current.filter((item) => item._id !== drive._id));
+        setSelectedDriveIds((current) => current.filter((id) => id !== drive._id));
+        await loadReports();
+        setToast({ type: "success", message: `${drive.companyName} deleted.` });
+      }
+    });
+  }
+
+  async function handleDeleteSelectedDrives() {
+    if (!selectedDriveIds.length) return;
+    setConfirmAction({
+      title: "Delete Selected Drives",
+      message: `Delete ${selectedDriveIds.length} selected drive(s)? This removes their attendance rows from the website.`,
+      confirmLabel: "Delete Selected",
+      onConfirm: async () => {
+        await api("/drives", {
+          method: "DELETE",
+          body: JSON.stringify({ driveIds: selectedDriveIds })
+        });
+        setSelectedDriveIds([]);
+        await load();
+        setToast({ type: "success", message: "Selected drives deleted." });
+      }
+    });
+  }
+
+  function toggleAllFilteredDrives() {
+    if (allFilteredSelected) {
+      setSelectedDriveIds((current) => current.filter((id) => !filteredDriveIds.includes(id)));
+    } else {
+      setSelectedDriveIds((current) => Array.from(new Set([...current, ...filteredDriveIds])));
+    }
+  }
+
+  async function downloadFilteredReport() {
+    if (!displayReports.length) {
+      setToast({ type: "error", message: "No report rows available for this filter." });
+      return;
+    }
+    const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;",
+      "'": "&#039;"
+    }[char]));
+    const rowsHtml = displayReports.map((rep) => `
+      <tr>
+        <td>${escapeHtml(getReportLabel(rep))}</td>
+        <td>${escapeHtml(rep.totalEligible)}</td>
+        <td>${escapeHtml(rep.totalRegistered)}</td>
+        <td>${escapeHtml(rep.totalSelected)}</td>
+        <td>${escapeHtml(rep.absent)}</td>
+        <td>${escapeHtml(rep.present)}</td>
+        <td>${escapeHtml(rep.grandTotal)}</td>
+        <td>${escapeHtml(rep.presentPercent)}%</td>
+        <td>${escapeHtml(rep.absentPercent)}%</td>
+      </tr>
+    `).join("");
+    const totalHtml = selectedCompanyFilter === "ALL" ? `
+      <tr class="total">
+        <td>Grand Total</td>
+        <td>${reportsTotal.totalEligible}</td>
+        <td>${reportsTotal.totalRegistered}</td>
+        <td>${reportsTotal.totalSelected}</td>
+        <td>${reportsTotal.absent}</td>
+        <td>${reportsTotal.present}</td>
+        <td>${reportsTotal.grandTotal}</td>
+        <td>${reportsTotal.presentPercent}%</td>
+        <td>${reportsTotal.absentPercent}%</td>
+      </tr>
+    ` : "";
+    const reportHtml = `
+      <!doctype html>
+      <html>
+        <head>
+          <title>DCPD Drive Report</title>
+          <style>
+            @page { size: A4 landscape; margin: 14mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; background: #fff; color: #102231; font-family: Arial, Helvetica, sans-serif; }
+            .page { width: 100%; padding: 0; }
+            .header { display: grid; grid-template-columns: 82px 1fr; gap: 18px; align-items: center; border-bottom: 3px solid #00777d; padding-bottom: 14px; margin-bottom: 14px; }
+            .logo { width: 72px; height: 72px; display: grid; place-items: center; border: 1px solid #d9e5eb; border-radius: 14px; overflow: hidden; background: #ffffff; }
+            .logo img { width: 100%; height: 100%; object-fit: contain; padding: 5px; }
+            h1 { margin: 0; font-size: 24px; }
+            h2 { margin: 4px 0 0; color: #52657b; font-size: 14px; font-weight: 700; }
+            .meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 16px; }
+            .meta div { border: 1px solid #d9e5eb; border-radius: 8px; padding: 8px 10px; font-size: 11px; }
+            .meta b { display: block; color: #00777d; font-size: 10px; text-transform: uppercase; margin-bottom: 3px; }
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10.5px; }
+            th { background: #00777d; color: #fff; padding: 8px 7px; text-align: center; text-transform: uppercase; }
+            th:first-child, td:first-child { text-align: left; width: 25%; }
+            td { border: 1px solid #dbe5eb; padding: 7px; text-align: center; vertical-align: middle; }
+            tr:nth-child(even) td { background: #f8fbfc; }
+            tr.total td { background: #e8f7f3; font-weight: 900; }
+            .footer { margin-top: 12px; color: #64748b; font-size: 10px; display: flex; justify-content: space-between; }
+            @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+          </style>
+        </head>
+        <body>
+          <main class="page">
+            <section class="header">
+              <div class="logo"><img src="${window.location.origin}/logo.png" alt="Eligibility Flow logo" /></div>
+              <div>
+                <h1>${escapeHtml(activeReportConfig.title)}</h1>
+                <h2>Eligibility Flow | DCPD Drive Report</h2>
+              </div>
+            </section>
+            <section class="meta">
+              <div><b>Department</b>${escapeHtml(reportFilters.department === "ALL" ? "All Departments" : reportFilters.department)}</div>
+              <div><b>Batch</b>${escapeHtml(reportFilters.batch === "ALL" ? "All Batches" : reportFilters.batch)}</div>
+              <div><b>Stream</b>${escapeHtml(reportFilters.program === "ALL" ? "All Streams" : reportFilters.program)}</div>
+              <div><b>Month</b>${escapeHtml(reportFilters.month === "ALL" ? "All History" : reportFilters.month)}</div>
+            </section>
+            <section class="meta" style="grid-template-columns: 1fr;">
+              <div><b>Report Type</b>${escapeHtml(activeReportConfig.title)}</div>
+            </section>
+            <table>
+              <thead>
+                <tr>
+                  <th>${escapeHtml(activeReportConfig.label)}</th>
+                  <th>Total Eligible</th>
+                  <th>Total Registered</th>
+                  <th>Total Selected</th>
+                  <th>Absent</th>
+                  <th>Present</th>
+                  <th>Grand Total</th>
+                  <th>Present %</th>
+                  <th>Absent %</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}${totalHtml}</tbody>
+            </table>
+            <section class="footer">
+              <span>Prepared by ${escapeHtml(user.name || "HOD")}</span>
+              <span>Generated on ${new Date().toLocaleString()}</span>
+            </section>
+          </main>
+        </body>
+      </html>
+    `;
+    const oldFrame = document.getElementById("dcpd-report-print-frame");
+    oldFrame?.remove();
+    const iframe = document.createElement("iframe");
+    iframe.id = "dcpd-report-print-frame";
+    iframe.title = "DCPD report print frame";
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.style.opacity = "0";
+    document.body.appendChild(iframe);
+
+    const frameWindow = iframe.contentWindow;
+    const frameDocument = frameWindow?.document;
+    if (!frameWindow || !frameDocument) {
+      iframe.remove();
+      setToast({ type: "error", message: "Unable to prepare the PDF report." });
+      return;
+    }
+
+    frameDocument.open();
+    frameDocument.write(reportHtml);
+    frameDocument.close();
+    setTimeout(() => {
+      frameWindow.focus();
+      frameWindow.print();
+      setTimeout(() => iframe.remove(), 2000);
+    }, 350);
+    setToast({ type: "success", message: "Print dialog opened. Select Save as PDF." });
+  }
+
   // Filter reports by selected company
+  const reportsList = useMemo(() => {
+    if (Array.isArray(reports)) return reports;
+    if (reports && Array.isArray(reports.summaries)) return reports.summaries;
+    return [];
+  }, [reports]);
+
+  const reportOptions = reports && !Array.isArray(reports) ? reports : {};
+
+  const reportModeConfig = {
+    company: { title: "Company Wise Report", label: "Company Name", key: "companyName", rows: reportsList },
+    department: { title: "Department Wise Report", label: "Department", key: "department", rows: reportOptions.byDepartment || [] },
+    batch: { title: "Batch Wise Report", label: "Batch", key: "batch", rows: reportOptions.byBatch || [] },
+    stream: { title: "Stream Wise Report", label: "Stream", key: "program", rows: reportOptions.byProgram || [] }
+  };
+  const activeReportConfig = reportModeConfig[reportMode] || reportModeConfig.company;
+  const getReportLabel = (row, config = activeReportConfig) => (
+    row?.reportLabel ||
+    row?.[config.key] ||
+    row?.companyName ||
+    row?.name ||
+    row?._id ||
+    "Unmapped"
+  );
+  const activeReportRows = useMemo(() => {
+    const rows = Array.isArray(activeReportConfig.rows) ? activeReportConfig.rows : [];
+    return rows.map((row) => ({
+      ...row,
+      reportLabel: row[activeReportConfig.key] || row.companyName || row.name || row._id || "Unmapped",
+      reportId: row.driveId || row[activeReportConfig.key] || row.companyName || "Unmapped"
+    }));
+  }, [activeReportConfig.rows, activeReportConfig.key]);
+
   const displayReports = useMemo(() => {
-    if (selectedCompanyFilter === "ALL") return reports;
-    return reports.filter(r => r.companyName === selectedCompanyFilter);
-  }, [reports, selectedCompanyFilter]);
+    if (reportMode !== "company") return activeReportRows;
+    const sourceRows = selectedCompanyFilter === "ALL" ? reportsList : reportsList.filter(r => r.companyName === selectedCompanyFilter);
+    return sourceRows.map((row) => ({
+      ...row,
+      reportLabel: row.companyName || row.name || row._id || "Unmapped",
+      reportId: row.driveId || row.companyName || row.name || row._id || "Unmapped"
+    }));
+  }, [activeReportRows, reportMode, reportsList, selectedCompanyFilter]);
 
   // Calculate HOD reports aggregates
   const reportsTotal = useMemo(() => {
-    if (!reports.length) return { present: 0, absent: 0, grandTotal: 0, totalEligible: 0, totalRegistered: 0, totalSelected: 0 };
-    const totals = reports.reduce((acc, rep) => {
+    const sourceRows = reportMode === "company" && selectedCompanyFilter === "ALL" ? reportsList : displayReports;
+    if (!sourceRows.length) return { present: 0, absent: 0, grandTotal: 0, totalEligible: 0, totalRegistered: 0, totalSelected: 0, presentPercent: 0, absentPercent: 0 };
+    const totals = sourceRows.reduce((acc, rep) => {
       acc.present += rep.present || 0;
       acc.absent += rep.absent || 0;
       acc.grandTotal += rep.grandTotal || 0;
@@ -1230,7 +1587,7 @@ function DriveWisePage({ user }) {
     totals.presentPercent = totals.grandTotal > 0 ? Math.round((totals.present / totals.grandTotal) * 100) : 0;
     totals.absentPercent = totals.grandTotal > 0 ? Math.round((totals.absent / totals.grandTotal) * 100) : 0;
     return totals;
-  }, [reports]);
+  }, [displayReports, reportMode, reportsList, selectedCompanyFilter]);
 
   return (
     <>
@@ -1251,13 +1608,26 @@ function DriveWisePage({ user }) {
       )}
 
       {isMaker && (
-        <section className="panel upload-sheet-panel">
-          <div>
-            <h3><FileSpreadsheet size={18} /> Upload Attendance Sheet</h3>
-            <p className="subtle">The system reads company names, student identifiers, registration status, and round attendance from the sheet.</p>
-          </div>
-          <AttendancePreviewEditor submitPath="/drives/attendance-rows" submitLabel="Upload & Create Drives" onComplete={load} />
-        </section>
+        <>
+          <section className="panel guide-panel">
+            <div>
+              <h3><Sparkles size={18} /> How My Drives Works</h3>
+              <p className="subtle">Upload the drive attendance sheet, review the detected rows, then create drives. The system reads student identifiers and process attendance, while the company can be corrected before saving when the sheet is messy.</p>
+            </div>
+            <div className="guide-steps">
+              <div><strong>1. Upload</strong><span>Select the CSV or Excel file received from placement.</span></div>
+              <div><strong>2. Preview</strong><span>Check mapped columns and rows before creating drives.</span></div>
+              <div><strong>3. Save</strong><span>Created drives update dashboards, reports, and attendance logic.</span></div>
+            </div>
+          </section>
+          <section className="panel upload-sheet-panel">
+            <div>
+              <h3><FileSpreadsheet size={18} /> Upload Attendance Sheet</h3>
+              <p className="subtle">The system reads student identifiers and round attendance from the sheet, including noisy placement formats.</p>
+            </div>
+            <AttendancePreviewEditor submitPath="/drives/attendance-rows" submitLabel="Upload & Create Drives" onComplete={load} />
+          </section>
+        </>
       )}
 
       {/* RENDER DRIVES TAB */}
@@ -1268,6 +1638,16 @@ function DriveWisePage({ user }) {
               <Search size={18} />
               <input value={driveSearch} onChange={(event) => setDriveSearch(event.target.value)} placeholder="Search drive by company, role, or package" />
             </label>
+            {user.role === "HOD" && (
+              <>
+                <button className="soft" type="button" onClick={toggleAllFilteredDrives} disabled={!filteredDrives.length}>
+                  <CheckCircle2 size={17} /> {allFilteredSelected ? "Clear Selection" : "Select All"}
+                </button>
+                <button className="soft danger-action" type="button" onClick={handleDeleteSelectedDrives} disabled={!selectedDriveIds.length}>
+                  <Trash2 size={17} /> Delete Selected ({selectedDriveIds.length})
+                </button>
+              </>
+            )}
             <button className="soft" onClick={load}><RefreshCcw size={17} /> Refresh Drives</button>
           </section>
           <section className="drive-grid">
@@ -1278,6 +1658,11 @@ function DriveWisePage({ user }) {
                 user={user} 
                 refresh={load} 
                 requests={requests}
+                onDelete={user.role === "HOD" ? handleDeleteDrive : undefined}
+                selected={selectedDriveIds.includes(drive._id)}
+                onSelect={user.role === "HOD" ? (checked) => {
+                  setSelectedDriveIds((current) => checked ? Array.from(new Set([...current, drive._id])) : current.filter((id) => id !== drive._id));
+                } : undefined}
               />
             ))}
             {!drives.length && <EmptyState message="No drives created yet" />}
@@ -1290,17 +1675,59 @@ function DriveWisePage({ user }) {
       {/* RENDER HOD REPORTS TAB */}
       {!isMaker && activeTab === "reports" && (
         <section className="panel reports-panel" style={{ padding: "20px", display: "grid", gap: "24px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+          <div className="reports-heading-row">
             <div>
               <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}><BarChart3 size={22} /> Attendance & Selection Representation of Company Processes</h3>
               <p className="subtle">Comprehensive statistics of present/absent ratios, total eligible students, registered students, and student selections by company drives.</p>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <label style={{ fontSize: "13px", fontWeight: "600", color: "#475569" }}>Company View:</label>
+            <div className="report-filter-row">
+              <label>Report Type
+              <select value={reportMode} onChange={(e) => { setReportMode(e.target.value); setSelectedCompanyFilter("ALL"); }} className="report-company-select">
+                <option value="company">Company Wise Report</option>
+                <option value="department">Department Wise Report</option>
+                <option value="batch">Batch Wise Report</option>
+                <option value="stream">Stream Wise Report</option>
+              </select>
+              </label>
+              <label>Department
+              <select value={reportFilters.department} onChange={(e) => setReportFilters({ ...reportFilters, department: e.target.value })} className="report-company-select">
+                <option value="ALL">All Departments</option>
+                {(reportOptions.departments || []).map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+              </label>
+              <label>Batch
+              <select value={reportFilters.batch} onChange={(e) => setReportFilters({ ...reportFilters, batch: e.target.value })} className="report-company-select">
+                <option value="ALL">All Batches</option>
+                {(reportOptions.batches || []).map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+              </label>
+              <label>Stream
+              <select value={reportFilters.program} onChange={(e) => setReportFilters({ ...reportFilters, program: e.target.value })} className="report-company-select">
+                <option value="ALL">All Streams</option>
+                {(reportOptions.programs || []).map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+              </label>
+              <label>Month
+              <select value={reportFilters.month} onChange={(e) => setReportFilters({ ...reportFilters, month: e.target.value })} className="report-company-select">
+                <option value="ALL">All History</option>
+                {(reportOptions.months || []).map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+              </label>
+              <button className="soft" type="button" onClick={downloadFilteredReport}><FileDown size={17} /> Download A4 PDF</button>
+            </div>
+            {reportMode === "company" && <div className="report-company-row">
+              <label>Company View</label>
               <select value={selectedCompanyFilter} onChange={(e) => setSelectedCompanyFilter(e.target.value)} className="report-company-select">
                 <option value="ALL">All Companies (Overall Summary)</option>
-                {reports.map((r) => <option key={r.driveId} value={r.companyName}>{r.companyName}</option>)}
+                {reportsList.map((r) => <option key={r.driveId} value={r.companyName}>{r.companyName}</option>)}
               </select>
+            </div>}
+          </div>
+
+          <div className="report-mode-banner">
+            <div>
+              <strong>{activeReportConfig.title}</strong>
+              <span>{displayReports.length} row(s) matched with the current filters.</span>
             </div>
           </div>
 
@@ -1309,10 +1736,10 @@ function DriveWisePage({ user }) {
             {displayReports.map((rep) => {
               const maxCount = Math.max(rep.totalEligible || 0, rep.totalRegistered || 0, rep.totalSelected || 0, rep.grandTotal || 0, 1);
               return (
-                <div key={rep.driveId} className="report-visual-card">
+                <div key={rep.reportId} className="report-visual-card">
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <h4 style={{ margin: 0, color: "var(--ink)", fontSize: "16px" }}>{rep.companyName}</h4>
-                    <span style={{ fontSize: "12px", color: "var(--muted)", fontWeight: "600" }}>{rep.jobRole}</span>
+                    <h4 style={{ margin: 0, color: "var(--ink)", fontSize: "16px" }}>{getReportLabel(rep)}</h4>
+                    <span style={{ fontSize: "12px", color: "var(--muted)", fontWeight: "600" }}>{reportMode === "company" ? (rep.jobRole || "Auto-created from sheet") : activeReportConfig.label}</span>
                   </div>
                   
                   {/* Visual Multi-Bar Chart */}
@@ -1357,15 +1784,27 @@ function DriveWisePage({ user }) {
                 </div>
               );
             })}
-            {!displayReports.length && <EmptyState message="No matching company report data available" />}
+            {!displayReports.length && <EmptyState message={`No ${activeReportConfig.title.toLowerCase()} data available for this filter`} />}
           </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px" }}>
+            <BreakdownCard title="Department Wise" rows={reportOptions.byDepartment || []} labelKey="department" />
+            <BreakdownCard title="Batch Wise" rows={reportOptions.byBatch || []} labelKey="batch" />
+            <BreakdownCard title="Stream Wise" rows={reportOptions.byProgram || []} labelKey="program" />
+          </div>
+
+          <ReportBreakdownTables
+            departmentRows={reportOptions.byDepartment || []}
+            batchRows={reportOptions.byBatch || []}
+            programRows={reportOptions.byProgram || []}
+          />
 
           {/* Table Representation matching Image 5 format */}
           <div className="report-table-wrap" style={{ overflowX: "auto" }}>
             <table className="report-table">
               <thead>
                 <tr>
-                  <th>Company name</th>
+                  <th>{activeReportConfig.label}</th>
                   <th>Total Eligible</th>
                   <th>Total Registered</th>
                   <th>Total Selected</th>
@@ -1378,8 +1817,8 @@ function DriveWisePage({ user }) {
               </thead>
               <tbody>
                 {displayReports.map((rep) => (
-                  <tr key={rep.driveId}>
-                    <td style={{ fontWeight: "bold" }}>{rep.companyName}</td>
+                  <tr key={rep.reportId}>
+                    <td style={{ fontWeight: "bold" }}>{getReportLabel(rep)}</td>
                     <td>{rep.totalEligible}</td>
                     <td>{rep.totalRegistered}</td>
                     <td>{rep.totalSelected}</td>
@@ -1527,27 +1966,158 @@ function DriveWisePage({ user }) {
           </div>
         </section>
       )}
+      {toast && <ToastMessage toast={toast} onClose={() => setToast(null)} />}
+      {confirmAction && (
+        <ConfirmDialog
+          {...confirmAction}
+          onCancel={() => setConfirmAction(null)}
+          onDone={() => setConfirmAction(null)}
+          onError={(message) => setToast({ type: "error", message })}
+        />
+      )}
     </>
   );
 }
 
-function DriveCard({ drive, user, refresh, requests = [] }) {
+function ToastMessage({ toast, onClose }) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 3200);
+    return () => clearTimeout(timer);
+  }, [onClose]);
+
+  return createPortal(
+    <div className={`app-toast ${toast.type === "error" ? "error" : "success"}`}>
+      <span>{toast.message}</span>
+      <button className="soft" type="button" onClick={onClose}><X size={15} /></button>
+    </div>,
+    document.body
+  );
+}
+
+function ConfirmDialog({ title, message, confirmLabel = "Confirm", onConfirm, onCancel, onDone, onError }) {
+  const [busy, setBusy] = useState(false);
+
+  async function runConfirm() {
+    setBusy(true);
+    try {
+      await onConfirm?.();
+      onDone?.();
+    } catch (err) {
+      onError?.(err.message || "Action failed");
+      onDone?.();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return createPortal(
+    <div className="app-dialog-overlay">
+      <div className="app-dialog">
+        <h3>{title}</h3>
+        <p>{message}</p>
+        <div className="app-dialog-actions">
+          <button className="soft" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button className="danger-action" type="button" onClick={runConfirm} disabled={busy}>{busy ? "Working..." : confirmLabel}</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function BreakdownCard({ title, rows, labelKey }) {
+  const topRows = (rows || []).slice(0, 8);
+  const maxValue = Math.max(...topRows.map((row) => row.grandTotal || row.totalEligible || 0), 1);
+  return (
+    <div className="report-visual-card">
+      <h4 style={{ margin: "0 0 12px 0" }}>{title}</h4>
+      <div style={{ display: "grid", gap: "10px" }}>
+        {topRows.map((row) => {
+          const label = row[labelKey] || "Unmapped";
+          const value = row.grandTotal || row.totalEligible || 0;
+          const width = Math.max(4, Math.round((value / maxValue) * 100));
+          return (
+            <div key={label} className="bar-representation" style={{ gridTemplateColumns: "90px 1fr 48px" }}>
+              <span title={label} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+              <div className="bar-track">
+                <div className="bar-fill" style={{ width: `${width}%`, background: "#0d86a5" }} />
+              </div>
+              <span className="bar-label">{value}</span>
+            </div>
+          );
+        })}
+        {!topRows.length && <p className="subtle" style={{ margin: 0 }}>No filtered data available</p>}
+      </div>
+    </div>
+  );
+}
+
+function ReportBreakdownTables({ departmentRows, batchRows, programRows }) {
+  const sections = [
+    { title: "Department Wise Report", rows: departmentRows, keyName: "department" },
+    { title: "Batch Wise Report", rows: batchRows, keyName: "batch" },
+    { title: "Stream Wise Report", rows: programRows, keyName: "program" }
+  ];
+
+  return (
+    <div className="report-breakdown-tables">
+      {sections.map((section) => (
+        <div key={section.title} className="report-breakdown-table">
+          <h4>{section.title}</h4>
+          <div className="report-table-wrap">
+            <table className="report-table compact">
+              <thead>
+                <tr>
+                  <th>{section.keyName === "program" ? "Stream" : labelFor(section.keyName)}</th>
+                  <th>Total Eligible</th>
+                  <th>Total Registered</th>
+                  <th>Total Selected</th>
+                  <th>Absent</th>
+                  <th>Present</th>
+                  <th>Present %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {section.rows.map((row) => (
+                  <tr key={row[section.keyName] || "Unmapped"}>
+                    <td style={{ fontWeight: 700 }}>{row[section.keyName] || "Unmapped"}</td>
+                    <td>{row.totalEligible}</td>
+                    <td>{row.totalRegistered}</td>
+                    <td>{row.totalSelected}</td>
+                    <td style={{ color: "#dc2626", fontWeight: 600 }}>{row.absent}</td>
+                    <td style={{ color: "#16a34a", fontWeight: 600 }}>{row.present}</td>
+                    <td><span className="percent-pill present">{row.presentPercent}%</span></td>
+                  </tr>
+                ))}
+                {!section.rows.length && (
+                  <tr><td colSpan={7} style={{ textAlign: "center" }}>No data for this filter</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DriveCard({ drive, user, refresh, requests = [], onDelete, selected = false, onSelect }) {
   const [showSheetList, setShowSheetList] = useState(false);
+  const [cardMessage, setCardMessage] = useState("");
 
   const hasApprovedReupload = requests.some(r => r.drive?._id === drive._id && r.type === "REUPLOAD_SHEET" && r.status === "APPROVED");
   const hasPendingReupload = requests.some(r => r.drive?._id === drive._id && r.type === "REUPLOAD_SHEET" && r.status === "PENDING");
 
   async function requestReupload() {
-    const reason = prompt("Enter the reason for requesting permission to re-upload the attendance sheet:");
-    if (!reason || !reason.trim()) return;
     try {
       await api("/drives/access-requests", {
         method: "POST",
-        body: JSON.stringify({ driveId: drive._id, type: "REUPLOAD_SHEET", reason: reason.trim() })
+        body: JSON.stringify({ driveId: drive._id, type: "REUPLOAD_SHEET", reason: "List Maker requested permission to re-upload the attendance sheet." })
       });
+      setCardMessage("Re-upload request sent to HOD.");
       refresh();
     } catch (err) {
-      alert("Error requesting re-upload: " + err.message);
+      setCardMessage(`Unable to request re-upload: ${err.message}`);
     }
   }
 
@@ -1556,18 +2126,36 @@ function DriveCard({ drive, user, refresh, requests = [] }) {
       <div className="drive-card-header">
         <div>
           <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            {user.role === "HOD" && (
+              <input
+                className="drive-select-checkbox"
+                type="checkbox"
+                checked={selected}
+                onChange={(event) => onSelect?.(event.target.checked)}
+                onClick={(event) => event.stopPropagation()}
+                aria-label={`Select ${drive.companyName}`}
+              />
+            )}
             <BriefcaseBusiness size={18} style={{ color: "var(--blue)" }} />
             {drive.companyName}
           </h3>
           <p>{drive.jobRole === "Auto-created from sheet" ? "Created from uploaded attendance sheet" : `${drive.jobRole || "Role not set"}${drive.packageCtc ? ` - ${drive.packageCtc}` : ""}`}</p>
         </div>
-        <span className="status approved" style={{ background: "#dcfce7", color: "#15803d", fontWeight: "700" }}>Active</span>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <span className="status approved" style={{ background: "#dcfce7", color: "#15803d", fontWeight: "700" }}>Active</span>
+          {user.role === "HOD" && (
+            <button className="soft danger-action" type="button" onClick={() => onDelete?.(drive)} title="Delete drive">
+              <Trash2 size={16} /> Delete
+            </button>
+          )}
+        </div>
       </div>
       <div className="drive-stats">
         <Mini label="Eligible" value={drive.stats?.eligibleStudents || 0} />
         <Mini label="Registered" value={drive.stats?.registeredStudents || 0} />
         <Mini label="Not Registered" value={drive.stats?.nonRegisteredStudents || 0} />
       </div>
+      {cardMessage && <div className={cardMessage.toLowerCase().includes("unable") ? "notice error compact-notice" : "notice compact-notice"}>{cardMessage}</div>}
       {user.role === "LIST_MAKER" && (
         <>
           {hasApprovedReupload ? (
@@ -1616,6 +2204,8 @@ function DriveSheetList({ driveId, user, onClose }) {
   const [selectedSheet, setSelectedSheet] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null);
 
   async function loadSheets() {
     setLoading(true);
@@ -1634,12 +2224,27 @@ function DriveSheetList({ driveId, user, onClose }) {
     loadSheets();
   }, [driveId]);
 
+  async function deleteSheet(sheet, event) {
+    event.stopPropagation();
+    setConfirmAction({
+      title: "Delete Uploaded Sheet",
+      message: `Delete "${sheet.fileName}"? Drive attendance will be recalculated from remaining sheets.`,
+      confirmLabel: "Delete Sheet",
+      onConfirm: async () => {
+        await api(`/drives/sheets/${sheet._id}`, { method: "DELETE" });
+        if (selectedSheet?._id === sheet._id) setSelectedSheet(null);
+        await loadSheets();
+        setNotice({ type: "success", message: "Uploaded sheet deleted and attendance recalculated." });
+      }
+    });
+  }
+
   const filteredRows = useMemo(() => {
     if (!selectedSheet) return [];
     const compName = selectedSheet.drive?.companyName;
     if (!compName) return selectedSheet.rows || [];
     return (selectedSheet.rows || []).filter(row => {
-      const keys = Object.keys(row);
+      const keys = Object.keys(row || {});
       const companyKey = keys.find(k => {
         const norm = k.toLowerCase().replace(/[^a-z0-9]/g, "");
         return norm.includes("companyname") || norm === "company";
@@ -1649,13 +2254,13 @@ function DriveSheetList({ driveId, user, onClose }) {
     });
   }, [selectedSheet]);
 
-  return (
+  return createPortal(
     <>
       <div className="sheet-list-overlay">
         <div className="sheet-list-modal">
           <div className="sheet-list-header">
             <h3>Uploaded Sheets</h3>
-            <button className="soft" onClick={onClose}><ChevronLeft size={17} /> Close</button>
+            <button className="soft" onClick={onClose}><X size={17} /> Close</button>
           </div>
           <div className="sheet-list-body">
             {error && <div className="notice error">{error}</div>}
@@ -1666,9 +2271,13 @@ function DriveSheetList({ driveId, user, onClose }) {
                 <div>
                   <h4>{sheet.fileName}</h4>
                   <p>Uploaded by {sheet.uploadedBy?.name || "Unknown"} on {new Date(sheet.createdAt).toLocaleString()}</p>
+                  <p><strong>Prepared by:</strong> {(sheet.preparedByNames || []).length ? sheet.preparedByNames.join(", ") : "Placement Officer not found in sheet"}</p>
                   <p>{sheet.rowCount || sheet.rows?.length || 0} rows{sheet.isSnapshot ? " - current drive data" : ""}</p>
                 </div>
-                <Eye size={20} />
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <Eye size={20} />
+                  {user?.role === "HOD" && <button className="soft danger-action" type="button" onClick={(event) => deleteSheet(sheet, event)}><Trash2 size={15} /> Delete</button>}
+                </div>
               </div>
             ))}
           </div>
@@ -1689,29 +2298,58 @@ function DriveSheetList({ driveId, user, onClose }) {
           onComplete={loadSheets}
         />
       )}
+      {notice && <ToastMessage toast={notice} onClose={() => setNotice(null)} />}
+      {confirmAction && (
+        <ConfirmDialog
+          {...confirmAction}
+          onCancel={() => setConfirmAction(null)}
+          onDone={() => setConfirmAction(null)}
+          onError={(message) => setNotice({ type: "error", message })}
+        />
+      )}
     </>
+    , document.body
   );
 }
 
-function AttendancePreviewEditor({ submitPath, submitLabel, onComplete, compact = false, title = "CSV or Excel Sheet" }) {
+function AttendancePreviewEditor({ submitPath, submitLabel, onComplete, compact = false, title = "CSV or Excel Sheet", requireCompanyName = false }) {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState({ headers: [], rows: [] });
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [showFullPreview, setShowFullPreview] = useState(false);
+  const [companyName, setCompanyName] = useState("");
 
   const hasPreview = preview.rows.length > 0;
+  const inlinePreviewRows = preview.rows.slice(0, 200);
 
   async function previewFile(nextFile = file) {
     if (!nextFile) return;
+    if (requireCompanyName && !companyName.trim()) {
+      setMessage("Enter the company name before previewing the formatted sheet.");
+      return;
+    }
     setBusy(true);
     setMessage("");
     try {
       const body = new FormData();
       body.append("file", nextFile);
+      if (companyName.trim()) body.append("companyName", companyName.trim());
       const result = await api("/drives/attendance-preview", { method: "POST", body });
-      setPreview({ headers: result.headers || [], rows: result.rows || [] });
-      setMessage(`Preview ready: ${result.rows?.length || 0} rows. Edit any cell before upload.`);
+      setPreview({
+        headers: result.headers || [],
+        rows: result.rows || [],
+        totalRowCount: result.totalRowCount || result.rows?.length || 0,
+        companyCount: result.companyCount || 0,
+        companies: result.companies || [],
+        normalization: result.normalization || null,
+        notice: result.notice || "",
+        truncated: Boolean(result.truncated)
+      });
+      const companyText = result.companyCount ? ` across ${result.companyCount} companies` : "";
+      const truncationText = result.truncated ? " Preview is limited, but upload will process the full file." : "";
+      const normalizedText = result.normalization?.normalized ? ` Cleaned ${result.normalization.blockCount} block(s) into an aligned sheet.` : "";
+      setMessage(`Preview ready: ${result.totalRowCount || result.rows?.length || 0} rows${companyText}.${normalizedText}${truncationText}`);
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -1727,14 +2365,26 @@ function AttendancePreviewEditor({ submitPath, submitLabel, onComplete, compact 
   }
 
   async function submitRows() {
-    if (!hasPreview) return;
+    if (!hasPreview && !file) return;
+    if (requireCompanyName && !companyName.trim()) {
+      setMessage("Enter the company name before creating drives from this sheet.");
+      return;
+    }
     setBusy(true);
     setMessage("");
     try {
-      const result = await api(submitPath, {
-        method: "POST",
-        body: JSON.stringify({ rows: preview.rows })
-      });
+      let result;
+      if (submitPath === "/drives/attendance-rows" && file) {
+        const body = new FormData();
+        body.append("file", file);
+        if (companyName.trim()) body.append("companyName", companyName.trim());
+        result = await api("/drives/attendance-sheet", { method: "POST", body });
+      } else {
+        result = await api(submitPath, {
+          method: "POST",
+          body: JSON.stringify({ rows: preview.rows, companyName: companyName.trim() || undefined })
+        });
+      }
       const review = result.errors?.length
         ? ` ${result.errors.length} rows need review: ${result.errors.slice(0, 3).map((item) => `row ${item.row} ${item.message}`).join("; ")}`
         : "";
@@ -1753,11 +2403,24 @@ function AttendancePreviewEditor({ submitPath, submitLabel, onComplete, compact 
   function clearPreview() {
     setFile(null);
     setPreview({ headers: [], rows: [] });
+    if (requireCompanyName) setCompanyName("");
     setMessage("");
   }
 
   return (
     <div className={`attendance-preview-editor ${compact ? "compact" : ""}`}>
+      {requireCompanyName && (
+        <div className="formatter-company-box">
+          <label>Company Name
+            <input
+              value={companyName}
+              onChange={(event) => setCompanyName(event.target.value)}
+              placeholder="Enter company name manually, e.g. Iutron"
+            />
+          </label>
+          <p className="subtle">This name will be used for all formatted rows. The formatter will not depend on company text inside the uploaded sheet.</p>
+        </div>
+      )}
       <div className="sheet-upload-row preview-upload-row">
         <label>{title}
           <input
@@ -1770,13 +2433,27 @@ function AttendancePreviewEditor({ submitPath, submitLabel, onComplete, compact 
             }}
           />
         </label>
-        <button className="soft" type="button" onClick={() => previewFile()} disabled={!file || busy}><Eye size={17} /> Preview</button>
-        <button type="button" onClick={submitRows} disabled={!hasPreview || busy}><FileSpreadsheet size={17} /> {submitLabel}</button>
+        <button className="soft" type="button" onClick={() => previewFile()} disabled={!file || busy || (requireCompanyName && !companyName.trim())}><Eye size={17} /> Preview</button>
+        <button type="button" onClick={submitRows} disabled={!hasPreview || busy || (requireCompanyName && !companyName.trim())}><FileSpreadsheet size={17} /> {submitLabel}</button>
       </div>
       {hasPreview && (
         <div className="sheet-preview-card">
+          {preview.normalization?.normalized && (
+            <div className="normalization-summary">
+              <strong>Auto-aligned messy sheet</strong>
+              <span>{preview.normalization.blockCount} block(s) detected</span>
+              <span>{preview.normalization.cleanRows} clean row(s)</span>
+              {!!preview.normalization.preparedByNames?.length && <span>Prepared by {preview.normalization.preparedByNames.join(", ")}</span>}
+            </div>
+          )}
+          {preview.notice && <div className="notice compact-notice">{preview.notice}</div>}
           <div className="preview-summary">
-            <strong>{preview.rows.length} editable rows</strong>
+            <strong>
+              {preview.totalRowCount || preview.rows.length} rows
+              {preview.companyCount ? ` across ${preview.companyCount} companies` : ""}
+              {preview.truncated ? ` (${preview.rows.length} shown)` : ""}
+            </strong>
+            {preview.normalization?.rescuedRows ? <span className="subtle">{preview.normalization.rescuedRows} row(s) recovered by noisy-sheet scan</span> : null}
             <div className="preview-actions">
               <button className="soft" type="button" onClick={() => setShowFullPreview(true)}>Full View</button>
               <button className="soft" type="button" onClick={clearPreview}>Clear</button>
@@ -1788,7 +2465,7 @@ function AttendancePreviewEditor({ submitPath, submitLabel, onComplete, compact 
                 <tr>{preview.headers.map((header) => <th key={header}>{header}</th>)}</tr>
               </thead>
               <tbody>
-                {preview.rows.map((row, rowIndex) => (
+                {inlinePreviewRows.map((row, rowIndex) => (
                   <tr key={rowIndex}>
                     {preview.headers.map((header) => (
                       <td key={header}>
@@ -1800,6 +2477,9 @@ function AttendancePreviewEditor({ submitPath, submitLabel, onComplete, compact 
               </tbody>
             </table>
           </div>
+          {preview.rows.length > inlinePreviewRows.length && (
+            <p className="subtle" style={{ margin: "10px 0 0 0" }}>Showing first {inlinePreviewRows.length} rows here. Open Full View for more.</p>
+          )}
         </div>
       )}
       {message && <div className={message.toLowerCase().includes("invalid") || message.toLowerCase().includes("required") || message.toLowerCase().includes("unable") ? "notice error" : "notice"}>{message}</div>}
@@ -1826,10 +2506,15 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [visibleLimit, setVisibleLimit] = useState(300);
+  const [downloadFormat, setDownloadFormat] = useState("csv");
+  const [selectedHeaders, setSelectedHeaders] = useState(headers);
 
   useEffect(() => {
     setRows(initialRows);
-  }, [initialRows]);
+    setVisibleLimit(300);
+    setSelectedHeaders(headers);
+  }, [initialRows, headers]);
 
   const hasChanges = useMemo(() => {
     if (!requireApproval) return false;
@@ -1905,9 +2590,36 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
     }
   }
 
-  const currentRows = requireApproval ? rows : initialRows;
+  async function downloadSheet() {
+    if (!sheetId) return;
+    const token = localStorage.getItem("eligibleFlowToken") || localStorage.getItem("token");
+    const params = new URLSearchParams({
+      format: downloadFormat,
+      columns: selectedHeaders.join(",")
+    });
+    const response = await fetch(`${API_URL}/drives/sheets/${sheetId}/download?${params}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+    if (!response.ok) {
+      setMessage("Unable to download this sheet");
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${title.replace(/[^a-z0-9_-]+/gi, "_")}.${downloadFormat}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setMessage(`Sheet downloaded as ${downloadFormat.toUpperCase()}`);
+  }
 
-  return (
+  const currentRows = requireApproval ? rows : initialRows;
+  const visibleRows = currentRows.slice(0, visibleLimit);
+
+  return createPortal(
     <div className="sheet-preview-modal-overlay">
       <div className="sheet-preview-modal">
         <div className="sheet-preview-modal-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1919,7 +2631,7 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
             {requireApproval && hasChanges && !showRequestForm && (
               <button onClick={() => setShowRequestForm(true)} style={{ background: "var(--orange)", color: "white" }}>Request HOD Approval</button>
             )}
-            <button className="soft" onClick={onClose}><ChevronLeft size={17} /> Close</button>
+            <button className="soft" onClick={onClose}><X size={17} /> Close</button>
           </div>
         </div>
 
@@ -1947,13 +2659,46 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
         )}
 
         <div className="sheet-preview-modal-body">
+          {sheetId && (
+            <div className="sheet-download-panel">
+              <div>
+                <strong>Download Sheet</strong>
+                <p className="subtle">Choose format and columns for the downloaded file.</p>
+              </div>
+              <select value={downloadFormat} onChange={(event) => setDownloadFormat(event.target.value)}>
+                <option value="csv">CSV</option>
+                <option value="xlsx">Excel</option>
+                <option value="json">JSON</option>
+              </select>
+              <div className="sheet-column-picker">
+                <button className="soft" type="button" onClick={() => setSelectedHeaders(headers)}>All Columns</button>
+                <button className="soft" type="button" onClick={() => setSelectedHeaders([])}>Clear</button>
+                {headers.map((header) => (
+                  <label key={header}>
+                    <input
+                      type="checkbox"
+                      checked={selectedHeaders.includes(header)}
+                      onChange={(event) => {
+                        setSelectedHeaders((current) => event.target.checked ? [...current, header] : current.filter((item) => item !== header));
+                      }}
+                    />
+                    {header}
+                  </label>
+                ))}
+              </div>
+              <button type="button" onClick={downloadSheet} disabled={!selectedHeaders.length}><FileDown size={17} /> Download</button>
+            </div>
+          )}
+          <div className="notice" style={{ marginBottom: "12px" }}>
+            Showing {visibleRows.length} of {currentRows.length} rows. Use Show More for larger sheets.
+          </div>
           <div className="preview-table-wrap full-size">
             <table className="preview-table">
               <thead>
                 <tr>{headers.map((header) => <th key={header}>{header}</th>)}</tr>
               </thead>
               <tbody>
-                {currentRows.map((row, rowIndex) => (
+                {visibleRows.map((row, rowIndex) => (
                   <tr key={rowIndex}>
                     {headers.map((header) => (
                       <td key={header}>
@@ -1972,21 +2717,27 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
               </tbody>
             </table>
           </div>
+          {currentRows.length > visibleLimit && (
+            <div style={{ display: "flex", justifyContent: "center", paddingTop: "12px" }}>
+              <button className="soft" type="button" onClick={() => setVisibleLimit((value) => value + 300)}>Show More Rows</button>
+            </div>
+          )}
         </div>
       </div>
     </div>
+    , document.body
   );
 }
 
 function ProfilePage({ user }) {
   const { updateProfile, uploadProfilePhoto } = useAuth();
-  const [form, setForm] = useState({ name: user.name || "", email: user.email || "", personalEmail: user.personalEmail || "", profileImage: user.profileImage || "" });
+  const [form, setForm] = useState({ name: user.name || "", email: user.email || "", personalEmail: user.personalEmail || "", phone: user.phone || "", profileImage: user.profileImage || "" });
   const [message, setMessage] = useState("");
 
   async function saveProfile(event) {
     event.preventDefault();
     const updated = await updateProfile(form);
-    setForm({ name: updated.name || "", email: updated.email || "", personalEmail: updated.personalEmail || "", profileImage: updated.profileImage || "" });
+    setForm({ name: updated.name || "", email: updated.email || "", personalEmail: updated.personalEmail || "", phone: updated.phone || "", profileImage: updated.profileImage || "" });
     setMessage("Profile updated successfully");
   }
 
@@ -2021,9 +2772,10 @@ function ProfilePage({ user }) {
             <h3>Profile Information</h3>
             <p>Keep your account details updated for dashboard and report access.</p>
           </div>
-          <label>Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
+          <label className="full-span">Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
           <label>Official Email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></label>
           <label>Personal Email<input type="email" value={form.personalEmail} onChange={(e) => setForm({ ...form, personalEmail: e.target.value })} /></label>
+          <label>Phone Number<input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Add phone number" /></label>
           <button><Save size={17} /> Save Profile</button>
         </form>
       </section>
@@ -2034,7 +2786,6 @@ function ProfilePage({ user }) {
 function MasterDataReadOnlyPage() {
   const [students, setStudents] = useState({ items: [], total: 0, page: 1, pages: 1 });
   const [filters, setFilters] = useState({ search: "", batch: "", department: "", course: "", program: "", semester: "", page: 1, limit: 50 });
-  const [selected, setSelected] = useState(null);
   const [error, setError] = useState("");
 
   const query = useMemo(() => new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== "")).toString(), [filters]);
@@ -2050,31 +2801,26 @@ function MasterDataReadOnlyPage() {
 
   useEffect(() => { loadStudents(); }, [query]);
 
-  async function viewStudent(id) {
-    setSelected(await api(`/records/students/${id}`));
-  }
-
   return (
     <>
       <PageHeader eyebrow="Master Data" title="Master Data (Read Only)" subtitle="View student master records; no edits allowed" />
       <FilterBar filters={filters} setFilters={setFilters} />
       {error && <ErrorState message={error} />}
       <DataTable
-        columns={["Roll No", "Name", "Mail", "Phone", "Department", "Course", "CGPA", "Attendance", "Batch", "Stuck Off", "Actions"]}
+        columns={["Roll No", "Enrollment No", "Name", "Mail", "Phone", "Department", "Course", "CGPA", "Batch", "Struck Off"]}
         rows={students.items.map((s) => {
           const stuckOff = s.driveRestriction?.status === "STUCK_OFF" || ["stuck off", "struck off", "stuck_off", "struck_off"].includes(String(s.status || "").toLowerCase());
           return [
             s.rollNo,
+            s.enrollmentNo || s.registrationNo || s.universityId || "-",
             s.name,
             s.email || "-",
             s.phone || "-",
             s.department,
             s.course || "-",
             formatCgpa(s.cgpa),
-            `${s.attendance}%`,
             s.batch || "-",
-            <span className={`status ${stuckOff ? "rejected" : "approved"}`}>{stuckOff ? "Yes" : "No"}</span>,
-            <button onClick={() => viewStudent(s._id)}><Eye size={16} /> View</button>
+            <span className={`status ${stuckOff ? "rejected" : "approved"}`}>{stuckOff ? "Yes" : "No"}</span>
           ];
         })}
       />
@@ -2083,7 +2829,6 @@ function MasterDataReadOnlyPage() {
         <span>{students.total} records - Page {filters.page} of {students.pages || 1}</span>
         <button disabled={filters.page >= students.pages} onClick={() => setFilters({ ...filters, page: filters.page + 1 })}>Next</button>
       </div>
-      {selected && <StudentDrawer payload={selected} close={() => setSelected(null)} readOnly />}
     </>
   );
 }
@@ -2114,29 +2859,44 @@ function EligibilityListsPage({ setSelectedList, setActive, isHod = false }) {
         {!isHod && <button onClick={() => setActive("create-eligibility")}><ListChecks size={17} /> Create New List</button>}
         <button onClick={loadLists}><RefreshCcw size={17} /> Refresh</button>
       </PageHeader>
+      <section className="panel guide-panel">
+        <div>
+          <h3><ListChecks size={18} /> How Eligibility Lists Work</h3>
+          <p className="subtle">Create a list by applying CGPA, backlog, attendance, batch, department, and program rules on master student records. Open a list to verify eligible and not eligible students before finalizing it for the placement office.</p>
+        </div>
+        <div className="guide-steps">
+          <div><strong>1. Create Criteria</strong><span>Select the academic filters and minimum eligibility rules.</span></div>
+          <div><strong>2. Review Students</strong><span>Use Sheet Preview, Eligible, and Not Eligible tabs to inspect the result.</span></div>
+          <div><strong>3. Finalize</strong><span>Finalize only after the list is checked; HOD can review approved records.</span></div>
+        </div>
+      </section>
       {error && <div className="notice error">{error}</div>}
       {loading && <div className="notice">Loading...</div>}
       <section className="panel" style={{ overflow: "visible" }}>
         {!lists.length ? <EmptyState message="No eligibility lists created yet" /> : (
           <DataTable
-            className="eligible-students-table"
-            columns={["List Name", "Company / Drive", "Total Synced", "Eligible Count", "Not Eligible", "Status", "Created By", "Action"]}
-            rows={lists.map(list => [
-              <strong>{list.name}</strong>,
-              list.companyName ? `${list.companyName} ${list.jobRole ? `(${list.jobRole})` : ""}` : "-",
-              list.eligibilityBreakdown?.totalChecked || 0,
-              <span style={{ color: "var(--green)", fontWeight: "bold" }}>{list.eligibilityBreakdown?.totalEligible || 0}</span>,
-              <span style={{ color: "var(--red)", fontWeight: "bold" }}>{list.eligibilityBreakdown?.totalNotEligible || 0}</span>,
-              <span className={`status ${list.status === "FINALIZED" ? "approved" : "pending"}`}>{list.status}</span>,
-              list.createdBy?.name || list.createdBy?.email || "Unknown",
-              <button 
-                className="soft" 
-                onClick={() => { setSelectedList(list); setActive("view-eligibility"); }}
-                style={{ minHeight: "32px", padding: "0 10px" }}
-              >
-                <Eye size={14} /> View Details
-              </button>
-            ])}
+            className="eligibility-lists-table"
+            columns={["List Name", "Company / Drive", "Total Synced", "Eligible Count", "Not Eligible", "Status", "Created By", "Created On", "Action"]}
+            rows={lists.map(list => {
+              const companyLabel = list.companyName || list.name || "-";
+              return [
+                <strong>{list.name}</strong>,
+                companyLabel !== "-" ? `${companyLabel} ${list.jobRole ? `(${list.jobRole})` : ""}` : "-",
+                list.eligibilityBreakdown?.totalChecked || 0,
+                <span style={{ color: "var(--green)", fontWeight: "bold" }}>{list.eligibilityBreakdown?.totalEligible || 0}</span>,
+                <span style={{ color: "var(--red)", fontWeight: "bold" }}>{list.eligibilityBreakdown?.totalNotEligible || 0}</span>,
+                <span className={`status ${list.status === "FINALIZED" ? "approved" : "pending"}`}>{list.status}</span>,
+                list.createdBy?.name || list.createdBy?.email || "Unknown",
+                formatDateTime(list.createdAt),
+                <button 
+                  className="soft" 
+                  onClick={() => { setSelectedList(list); setActive("view-eligibility"); }}
+                  style={{ minHeight: "32px", padding: "0 10px" }}
+                >
+                  <Eye size={14} /> View Details
+                </button>
+              ];
+            })}
           />
         )}
       </section>
@@ -2148,6 +2908,8 @@ function CreateEligibilityListPage({ onComplete }) {
   const [form, setForm] = useState({
     name: "",
     description: "",
+    companyName: "",
+    jobRole: "",
     cgpaMin: "",
     tenthPercentageMin: "",
     twelfthPercentageMin: "",
@@ -2186,6 +2948,8 @@ function CreateEligibilityListPage({ onComplete }) {
       const payload = {
         name: form.name.trim(),
         description: form.description.trim(),
+        companyName: form.companyName.trim(),
+        jobRole: form.jobRole.trim(),
         courses: form.courses,
         departments: form.departments,
         batches: form.batches,
@@ -2231,6 +2995,14 @@ function CreateEligibilityListPage({ onComplete }) {
                 <div className="form-group">
                   <label htmlFor="listName">List Name</label>
                   <input id="listName" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="companyName">Company Name</label>
+                  <input id="companyName" value={form.companyName} onChange={(e) => setForm({ ...form, companyName: e.target.value })} placeholder="Example: Gemini AI" required />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="jobRole">Drive / Job Role</label>
+                  <input id="jobRole" value={form.jobRole} onChange={(e) => setForm({ ...form, jobRole: e.target.value })} placeholder="Example: Software Developer" />
                 </div>
                 <div className="form-group">
                   <label htmlFor="description">Description</label>
@@ -2328,7 +3100,7 @@ function CreateEligibilityListPage({ onComplete }) {
                 <div className="form-group checkbox-group">
                   <label className="checkbox-label">
                     <input type="checkbox" checked={form.allowStuckOff} onChange={(e) => setForm({ ...form, allowStuckOff: e.target.checked })} />
-                    Allow Stuck-Off Students
+                    Allow Struck Off Students
                   </label>
                 </div>
               </div>
@@ -2399,7 +3171,7 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
     const categories = {
       "Less CGPA": 0,
       "Backlogs Limit Exceeded": 0,
-      "Stuck Off": 0,
+      "Struck Off": 0,
       "Less Attendance": 0,
       "Restricted Course/Branch/Batch": 0,
       "Other Reasons": 0
@@ -2415,7 +3187,7 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
       } else if (r.includes("backlog")) {
         categories["Backlogs Limit Exceeded"] += count;
       } else if (r.includes("stuck") || r.includes("struck")) {
-        categories["Stuck Off"] += count;
+        categories["Struck Off"] += count;
       } else if (r.includes("attendance")) {
         categories["Less Attendance"] += count;
       } else if (r.includes("eligible") || r.includes("restricted") || r.includes("course") || r.includes("branch") || r.includes("batch") || r.includes("department") || r.includes("program")) {
@@ -2431,7 +3203,7 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
     const isElig = student.isEligible !== undefined ? student.isEligible : (student.eligibilityStatus === "Eligible");
     let list = student.reasons || [];
     if (!isElig && (list.length === 0 || list.includes("Meets all eligibility criteria") || list.includes("Meets all criteria"))) {
-      return ["Student was Stuck Off at list creation time"];
+      return ["Student was Struck Off at list creation time"];
     }
     return list;
   }
@@ -2474,6 +3246,9 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
     return combined.filter(s => 
       String(s.name || "").toLowerCase().includes(searchTermClean) ||
       String(s.rollNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.enrollmentNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.registrationNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.universityId || "").toLowerCase().includes(searchTermClean) ||
       String(s.email || "").toLowerCase().includes(searchTermClean) ||
       String(s.department || "").toLowerCase().includes(searchTermClean) ||
       String(s.course || "").toLowerCase().includes(searchTermClean)
@@ -2490,6 +3265,9 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
     return eligibleMapped.filter(s => 
       String(s.name || "").toLowerCase().includes(searchTermClean) ||
       String(s.rollNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.enrollmentNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.registrationNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.universityId || "").toLowerCase().includes(searchTermClean) ||
       String(s.email || "").toLowerCase().includes(searchTermClean) ||
       String(s.department || "").toLowerCase().includes(searchTermClean) ||
       String(s.course || "").toLowerCase().includes(searchTermClean)
@@ -2506,19 +3284,18 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
     return ineligibleMapped.filter(s => 
       String(s.name || "").toLowerCase().includes(searchTermClean) ||
       String(s.rollNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.enrollmentNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.registrationNo || "").toLowerCase().includes(searchTermClean) ||
+      String(s.universityId || "").toLowerCase().includes(searchTermClean) ||
       String(s.email || "").toLowerCase().includes(searchTermClean) ||
       String(s.department || "").toLowerCase().includes(searchTermClean) ||
       String(s.course || "").toLowerCase().includes(searchTermClean)
     );
   }, [list.notEligibleStudents, searchTermClean]);
 
-  const allColumns = isHod
-    ? ["Roll No", "Name", "Email", "Department", "CGPA", "Eligibility Status", "Details / Reason"]
-    : ["Roll No", "Name", "Email", "Department", "CGPA", "Eligibility Status", "Registration Status", "Details / Reason"];
+  const allColumns = ["Sr No", "Roll No", "Enrollment No", "Name", "Email", "Department", "Course", "Batch", "CGPA", "Eligibility Status", "Details / Reason"];
 
-  const eligibleColumns = isHod
-    ? ["Roll No", "Name", "Email", "Department", "Course", "Batch", "CGPA"]
-    : ["Roll No", "Name", "Email", "Department", "Course", "Batch", "CGPA", "Registration Status"];
+  const eligibleColumns = ["Sr No", "Roll No", "Enrollment No", "Name", "Email", "Department", "Course", "Batch", "CGPA"];
 
   return (
     <>
@@ -2630,7 +3407,7 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
                   borderTop: `4px solid ${
                     category === "Less CGPA" ? "var(--blue)" :
                     category === "Backlogs Limit Exceeded" ? "var(--orange)" :
-                    category === "Stuck Off" ? "var(--red)" :
+                    category === "Struck Off" ? "var(--red)" :
                     category === "Less Attendance" ? "var(--yellow)" : "var(--muted)"
                   }`,
                   padding: "12px",
@@ -2689,20 +3466,19 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
             <DataTable
               className="eligible-students-table"
               columns={allColumns}
-              rows={allStudentsCombined.map(student => {
+              rows={allStudentsCombined.map((student, index) => {
                 const rowData = [
+                  index + 1,
                   student.rollNo || "-",
+                  student.enrollmentNo || student.registrationNo || student.universityId || "-",
                   student.name,
                   student.email || "-",
                   student.department || "-",
+                  student.course || "-",
+                  student.batch || "-",
                   formatCgpa(student.cgpa),
                   <span className={`status ${student.isEligible ? "approved" : "rejected"}`}>{student.eligibilityStatus}</span>
                 ];
-                if (!isHod) {
-                  rowData.push(
-                    <span className={`status ${student.registrationStatus === "REGISTERED" ? "approved" : student.registrationStatus === "NOT_REGISTERED" ? "rejected" : ""}`}>{student.registrationStatus?.replaceAll("_", " ") || "N/A"}</span>
-                  );
-                }
                 rowData.push(
                   student.isEligible ? (
                     <span style={{ color: "var(--muted)" }}>Meets all criteria</span>
@@ -2726,9 +3502,11 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
             <DataTable
               className="eligible-students-table"
               columns={eligibleColumns}
-              rows={filteredEligible.map(student => {
+              rows={filteredEligible.map((student, index) => {
                 const rowData = [
+                  index + 1,
                   student.rollNo || "-",
+                  student.enrollmentNo || student.registrationNo || student.universityId || "-",
                   student.name,
                   student.email || "-",
                   student.department || "-",
@@ -2736,11 +3514,6 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
                   student.batch || "-",
                   formatCgpa(student.cgpa)
                 ];
-                if (!isHod) {
-                  rowData.push(
-                    <span className={`status ${student.registrationStatus === "REGISTERED" ? "approved" : "rejected"}`}>{student.registrationStatus?.replaceAll("_", " ") || "NOT REGISTERED"}</span>
-                  );
-                }
                 return rowData;
               })}
             />
@@ -2754,9 +3527,11 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
           {!filteredNotEligible.length ? <EmptyState message="No ineligible students found matching the search" /> : (
             <DataTable
               className="eligible-students-table"
-              columns={["Roll No", "Name", "Email", "Department", "Course", "Batch", "CGPA", "Reason(s)"]}
-              rows={filteredNotEligible.map(student => [
+              columns={["Sr No", "Roll No", "Enrollment No", "Name", "Email", "Department", "Course", "Batch", "CGPA", "Reason(s)"]}
+              rows={filteredNotEligible.map((student, index) => [
+                index + 1,
                 student.rollNo || "-",
+                student.enrollmentNo || student.registrationNo || student.universityId || "-",
                 student.name,
                 student.email || "-",
                 student.department || "-",
@@ -2778,9 +3553,9 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
 function StuckOffReport({ items }) {
   return (
     <section className="panel stuck-report">
-      <h3>Stuck-Off Risk Report</h3>
+      <h3>Struck Off Risk Report</h3>
       <p className="subtle">Not registered means overall absent for that drive. If a registered student is present in any one process, the drive counts as overall present. Students absent in 2 or more drives are shown here for HOD review.</p>
-      {!items.length ? <EmptyState message="No stuck-off risk students yet" /> : (
+      {!items.length ? <EmptyState message="No Struck Off risk students yet" /> : (
         <div className="report-list">
           {items.map((item) => (
             <article key={item.student?._id || item.student?.studentId}>
@@ -2850,7 +3625,7 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
     event.preventDefault();
     if (readOnly) return;
     await onUpdateRestriction(status, reason);
-    setMessage(status === "CLEAR" ? "Student status changed to Active." : "Student marked as Stuck Off.");
+    setMessage(status === "CLEAR" ? "Student status changed to Active." : "Student marked as Struck Off.");
   }
 
   async function handleSaveEdit(event) {
@@ -2883,7 +3658,7 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
         <div className={`student-hero ${stuckOff ? "is-stuck" : "is-clear"}`}>
           <div className="student-avatar">{(currentStudent.name || "S").slice(0, 1).toUpperCase()}</div>
           <div className="student-title-block">
-            <span className={`status ${stuckOff ? "rejected" : "approved"}`}>{stuckOff ? "Stuck Off" : "Clear for drives"}</span>
+            <span className={`status ${stuckOff ? "rejected" : "approved"}`}>{stuckOff ? "Struck Off" : "Clear for drives"}</span>
             <h2>{currentStudent.name}</h2>
             <p>{currentStudent.rollNo || currentStudent.enrollmentNo || currentStudent.studentId || "-"} - {currentStudent.department || "-"} - {currentStudent.program || "-"}</p>
           </div>
@@ -2902,7 +3677,7 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
               <Mini label="Present Drives" value={summary.presentDrives ?? 0} />
               <Mini label="Absent Drives" value={summary.absentDrives ?? currentStudent.driveRestriction?.absentDriveCount ?? 0} />
               <Mini label="Total Drives" value={summary.totalDrives ?? 0} />
-              <Mini label="Stuck Off" value={stuckOff ? "Yes" : "No"} />
+              <Mini label="Struck Off" value={stuckOff ? "Yes" : "No"} />
             </div>
             {message && <div className="inline-success">{message}</div>}
             {!readOnly && <form className="restriction-form" onSubmit={saveRestriction}>
@@ -2918,7 +3693,7 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
               <button style={{ height: "42px" }}><Save size={17} /> Update Status</button>
             </form>}
 
-            {/* Absent Drive History contributing to Stuck-Off */}
+            {/* Absent Drive History contributing to Struck Off */}
             {(() => {
               const absentDrives = (summary.driveRows || []).filter(row => row.overallAttendanceStatus === "OVERALL_ABSENT");
               if (absentDrives.length > 0) {

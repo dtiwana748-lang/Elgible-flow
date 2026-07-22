@@ -7,6 +7,8 @@ import { AuditLog } from "../models/AuditLog.js";
 import { SpreadsheetConnection } from "../models/SpreadsheetConnection.js";
 import { DriveStudent } from "../models/DriveStudent.js";
 import { EligibilityList } from "../models/EligibilityList.js";
+import { AccessRequest } from "../models/AccessRequest.js";
+import { AttendanceSheet } from "../models/AttendanceSheet.js";
 
 const router = Router();
 
@@ -26,18 +28,45 @@ router.get("/summary", requireAuth, async (req, res) => {
     const myDrives = await Drive.find({ createdBy: req.user._id });
     const driveIds = myDrives.map(d => d._id);
 
-    let eligiblePool = 0;
-    let registeredCount = 0;
-    for (const d of myDrives) {
-      eligiblePool += d.stats?.eligibleStudents || 0;
-      registeredCount += d.stats?.registeredStudents || 0;
-    }
-    const registeredRatio = eligiblePool > 0 ? Number(((registeredCount / eligiblePool) * 100).toFixed(1)) : 0;
-
-    const [presents, absents] = await Promise.all([
+    const [driveStudentStats, latestSheets, presents, absents] = await Promise.all([
+      DriveStudent.aggregate([
+        { $match: { drive: { $in: driveIds } } },
+        {
+          $group: {
+            _id: "$drive",
+            registeredStudents: { $sum: { $cond: [{ $eq: ["$registrationStatus", "REGISTERED"] }, 1, 0] } }
+          }
+        }
+      ]),
+      AttendanceSheet.aggregate([
+        { $match: { drive: { $in: driveIds } } },
+        { $sort: { createdAt: -1 } },
+        {
+          $group: {
+            _id: "$drive",
+            rowCount: { $first: "$rowCount" },
+            uploadRows: { $first: "$uploadResult.rows" },
+            rowsSize: { $first: { $cond: [{ $isArray: "$rows" }, { $size: "$rows" }, 0] } }
+          }
+        }
+      ]),
       DriveStudent.countDocuments({ drive: { $in: driveIds }, overallAttendanceStatus: "OVERALL_PRESENT" }),
       DriveStudent.countDocuments({ drive: { $in: driveIds }, overallAttendanceStatus: "OVERALL_ABSENT" })
     ]);
+    const registeredByDrive = new Map(driveStudentStats.map((item) => [item._id.toString(), item.registeredStudents || 0]));
+    const sheetRowsByDrive = new Map(latestSheets.map((sheet) => [
+      sheet._id.toString(),
+      sheet.rowCount || sheet.uploadRows || sheet.rowsSize || 0
+    ]));
+    let eligiblePool = 0;
+    let registeredCount = 0;
+    for (const d of myDrives) {
+      const driveId = d._id.toString();
+      const eligible = sheetRowsByDrive.get(driveId) || d.stats?.eligibleStudents || 0;
+      eligiblePool += eligible;
+      registeredCount += Math.min(registeredByDrive.get(driveId) || d.stats?.registeredStudents || 0, eligible || Infinity);
+    }
+    const registeredRatio = eligiblePool > 0 ? Number(((registeredCount / eligiblePool) * 100).toFixed(1)) : 0;
     const totalAttended = presents + absents;
     const presentRate = totalAttended > 0 ? Number(((presents / totalAttended) * 100).toFixed(1)) : 0;
 
@@ -65,6 +94,17 @@ router.get("/summary", requireAuth, async (req, res) => {
   }
 
   const driveFilter = req.user.role === "HOD" ? {} : { createdBy: req.user._id };
+  const linkedConnectionIds = await SpreadsheetConnection.distinct("_id");
+  const masterStudentFilter = { "source.connection": linkedConnectionIds.length ? { $in: linkedConnectionIds } : { $in: [] } };
+  const stuckOffStatusValues = ["Stuck Off", "Struck Off", "STUCK_OFF", "STRUCK_OFF"];
+  const activeStatusFilter = {
+    $and: [
+      { status: { $nin: [...stuckOffStatusValues, "NOC"] } },
+      { status: { $not: /^noc$/i } },
+      { status: { $not: /^(stuck|struck)[\s_-]*off$/i } }
+    ]
+  };
+
   const [
     totalStudents,
     listMakers,
@@ -73,6 +113,7 @@ router.get("/summary", requireAuth, async (req, res) => {
     totalStuckOff,
     totalNoc,
     pendingApprovals,
+    pendingAccessRequests,
     approvedLists,
     studentsByDepartment,
     studentsByCourse,
@@ -83,24 +124,29 @@ router.get("/summary", requireAuth, async (req, res) => {
     recentActivity,
     latestConnection
   ] = await Promise.all([
-    Student.countDocuments(),
+    Student.countDocuments(masterStudentFilter),
     User.countDocuments({ role: "LIST_MAKER" }),
     Drive.countDocuments({ ...driveFilter, driveStatus: { $nin: ["ARCHIVED", "CANCELLED"] } }),
-    Student.countDocuments({ status: "Active" }),
     Student.countDocuments({
+      ...masterStudentFilter,
+      ...activeStatusFilter
+    }),
+    Student.countDocuments({
+      ...masterStudentFilter,
       $or: [
-        { status: { $in: ["Stuck Off", "Struck Off", "STUCK_OFF", "STRUCK_OFF"] } },
-        { "driveRestriction.status": "STUCK_OFF" }
+        { status: { $in: stuckOffStatusValues } },
+        { status: /^(stuck|struck)[\s_-]*off$/i }
       ]
     }),
-    Student.countDocuments({ status: "NOC" }),
+    Student.countDocuments({ ...masterStudentFilter, status: "NOC" }),
     Drive.countDocuments({ ...driveFilter, approvalStatus: "PENDING_HOD_APPROVAL" }),
+    AccessRequest.countDocuments({ status: "PENDING" }),
     Drive.countDocuments({ ...driveFilter, approvalStatus: "APPROVED" }),
-    Student.aggregate([{ $group: { _id: "$department", value: { $sum: 1 } } }, { $sort: { value: -1 } }, { $limit: 8 }]),
-    Student.aggregate([{ $group: { _id: "$course", value: { $sum: 1 } } }, { $sort: { value: -1 } }, { $limit: 8 }]),
-    Student.aggregate([{ $group: { _id: "$batch", value: { $sum: 1 } } }, { $sort: { value: -1 } }, { $limit: 8 }]),
-    Student.aggregate([{ $group: { _id: "$program", value: { $sum: 1 } } }, { $sort: { value: -1 } }, { $limit: 8 }]),
-    Student.aggregate([{ $group: { _id: "$status", value: { $sum: 1 } } }]),
+    Student.aggregate([{ $match: masterStudentFilter }, { $group: { _id: "$department", value: { $sum: 1 } } }, { $sort: { value: -1 } }, { $limit: 8 }]),
+    Student.aggregate([{ $match: masterStudentFilter }, { $group: { _id: "$course", value: { $sum: 1 } } }, { $sort: { value: -1 } }, { $limit: 8 }]),
+    Student.aggregate([{ $match: masterStudentFilter }, { $group: { _id: "$batch", value: { $sum: 1 } } }, { $sort: { value: -1 } }, { $limit: 8 }]),
+    Student.aggregate([{ $match: masterStudentFilter }, { $group: { _id: "$program", value: { $sum: 1 } } }, { $sort: { value: -1 } }, { $limit: 8 }]),
+    Student.aggregate([{ $match: masterStudentFilter }, { $group: { _id: "$status", value: { $sum: 1 } } }]),
     Drive.find(driveFilter).select("companyName stats approvalStatus driveStatus driveDate").sort({ updatedAt: -1 }).limit(8),
     AuditLog.find().populate("actor", "name role").sort({ createdAt: -1 }).limit(8),
     SpreadsheetConnection.findOne().sort({ updatedAt: -1 })
@@ -115,6 +161,7 @@ router.get("/summary", requireAuth, async (req, res) => {
       totalStuckOff,
       totalNoc,
       pendingApprovals,
+      pendingAccessRequests,
       approvedLists
     },
     charts: {

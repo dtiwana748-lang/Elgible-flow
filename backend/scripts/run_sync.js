@@ -4,6 +4,7 @@ import { SpreadsheetConnection } from "../models/SpreadsheetConnection.js";
 import { SpreadsheetSyncLog } from "../models/SpreadsheetSyncLog.js";
 import { Student } from "../models/Student.js";
 import { calculateCGPA } from "../utils/studentRules.js";
+import { triggerSpreadsheetUpdate } from "../utils/spreadsheetSync.js";
 import crypto from "crypto";
 import { parse } from "csv-parse/sync";
 import mongoose from "mongoose";
@@ -14,7 +15,7 @@ const systemFields = new Set([
   "fatherContactNo", "batch", "admissionYear", "passingYear", "department", "course", "program",
   "branch", "specialization", "semester", "section", "cgpa", "percentage", "tenthPercentage",
   "tenthPassingYear", "twelfthPercentage", "twelfthPassingYear", "diplomaPercentage",
-  "graduationPercentage", "pgStreams", "activeBacklogs", "totalBacklogs", "attendance",
+  "graduationPercentage", "pgStreams", "backlogs", "activeBacklogs", "totalBacklogs", "attendance",
   "category", "gender", "dob", "domicileCity", "domicileState", "address", "college",
   "placementStatus", "resumeUrl", "status"
 ]);
@@ -29,9 +30,13 @@ function normalizeNumber(value) {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value === "number") return value;
   let clean = String(value).trim();
+  if (/^(n\/?a|nil|none|no)$/i.test(clean)) return 0;
   if (clean.includes("%")) {
     clean = clean.replace(/%/g, "").trim();
   }
+  clean = clean.replace(/,/g, "");
+  const numericMatch = clean.match(/-?\d+(\.\d+)?/);
+  if (numericMatch) clean = numericMatch[0];
   const number = Number(clean);
   return Number.isFinite(number) ? number : undefined;
 }
@@ -65,9 +70,12 @@ function inferSystemField(header) {
   if (key.includes("average") && key.includes("cgpa")) return "cgpa";
   if (key.includes("cgpa")) return "cgpa";
   if (key.includes("attendance")) return "attendance";
-  if (key.includes("activebacklog")) return "activeBacklogs";
-  if (key.includes("totalbacklog")) return "totalBacklogs";
+  if (key.includes("activebacklog") || key.includes("currentbacklog") || key.includes("livebacklog") || key.includes("pendingbacklog")) return "activeBacklogs";
+  if (key.includes("totalbacklog") || key.includes("overallbacklog") || key.includes("historybacklog")) return "totalBacklogs";
   if (key.includes("backlog")) return "backlogs";
+  if ((key.includes("active") || key.includes("current") || key.includes("live") || key.includes("pending")) && key.includes("arrear")) return "activeBacklogs";
+  if ((key.includes("total") || key.includes("overall") || key.includes("history")) && key.includes("arrear")) return "totalBacklogs";
+  if (key.includes("arrear") || key.includes("backpaper") || key.includes("atkt") || key === "kt") return "backlogs";
   if (key.includes("category")) return "category";
   if (key.includes("gender")) return "gender";
   if (key.includes("dob")) return "dob";
@@ -154,6 +162,9 @@ function buildStudentPayload(row, mapping, connection, rowNumber) {
   
   for (const [sheetColumn, systemField] of Object.entries(usableMapping)) {
     const raw = sanitizeCell(row[sheetColumn]);
+    if (systemField === "status") {
+      payload._sheetStatusColumnSeen = true;
+    }
     if (!systemField || systemField === "customFields") {
       payload.customFields[sheetColumn] = raw;
     } else if (systemField.startsWith("semester.")) {
@@ -211,9 +222,113 @@ function buildStudentPayload(row, mapping, connection, rowNumber) {
   payload.name = payload.name || "Unnamed Student";
   payload.rollNo = payload.rollNo || payload.enrollmentNo || payload.registrationNo || payload.email;
   payload.studentId = payload.enrollmentNo || payload.registrationNo || payload.grNo || payload.universityId || payload.rollNo || payload.email || `${connection._id.toString()}-row-${rowNumber}`;
+  const normalizedStatus = String(payload.status || "").trim().toLowerCase();
+  if (["stuck off", "struck off", "stuck_off", "struck_off"].includes(normalizedStatus)) {
+    payload.driveRestriction = {
+      ...(payload.driveRestriction || {}),
+      status: "STUCK_OFF",
+      reason: "Marked Struck Off from synced master sheet status column.",
+      updatedAt: new Date()
+    };
+  } else if (normalizedStatus === "active" || normalizedStatus === "clear") {
+    payload.driveRestriction = {
+      ...(payload.driveRestriction || {}),
+      status: "CLEAR",
+      reason: "Marked clear from synced master sheet status column.",
+      updatedAt: new Date()
+    };
+  }
   payload.source.rowHash = crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex");
+  removeBlankUniqueIdentifiers(payload);
   
   return payload;
+}
+
+function removeBlankUniqueIdentifiers(payload) {
+  for (const field of ["rollNo", "enrollmentNo", "registrationNo", "grNo", "universityId", "email"]) {
+    if (payload[field] !== undefined && payload[field] !== null && !String(payload[field]).trim()) {
+      delete payload[field];
+    }
+  }
+  if (!payload.studentId || !String(payload.studentId).trim()) {
+    payload.studentId = `${payload.source.connection.toString()}-row-${payload.source.rowNumber}`;
+  }
+  payload.source.rowHash = crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex");
+}
+
+function finalizeStudentPayload(payload) {
+  delete payload._sheetStatusColumnSeen;
+  removeBlankUniqueIdentifiers(payload);
+}
+
+function sourceStatusIntent(payload) {
+  const normalizedStatus = String(payload.status || "").trim().toLowerCase();
+  if (normalizedStatus === "noc") return "NOC";
+  if (["stuck off", "struck off", "stuck_off", "struck_off"].includes(normalizedStatus)) return "STUCK_OFF";
+  if (normalizedStatus === "active" || normalizedStatus === "clear") return "CLEAR";
+  if (payload._sheetStatusColumnSeen && !normalizedStatus) return "CLEAR";
+  return null;
+}
+
+function applySheetStatusIntent(payload, existing) {
+  const intent = sourceStatusIntent(payload);
+  if (!intent) return;
+
+  if (intent === "NOC") {
+    if (String(existing?.status || "").trim().toUpperCase() === "NOC") {
+      payload.status = "NOC";
+      payload.driveRestriction = existing.driveRestriction;
+    } else {
+      payload.status = existing?.status || "Active";
+    }
+    return;
+  }
+
+  if (String(existing?.status || "").trim().toUpperCase() === "NOC") {
+    payload.status = "NOC";
+    payload.driveRestriction = existing.driveRestriction;
+    return;
+  }
+
+  if (intent === "STUCK_OFF") {
+    payload.status = "Struck Off";
+    payload.driveRestriction = {
+      ...(payload.driveRestriction || {}),
+      status: "STUCK_OFF",
+      reason: "Marked Struck Off from synced master sheet status column.",
+      updatedAt: new Date()
+    };
+  } else if (intent === "CLEAR") {
+    payload.status = "Active";
+    payload.driveRestriction = {
+      ...(payload.driveRestriction || {}),
+      status: "CLEAR",
+      reason: "Marked clear from synced master sheet status column.",
+      updatedAt: new Date(),
+      clearedAt: new Date()
+    };
+  }
+}
+
+function preserveManualNoc(payload, existing) {
+  if (String(existing?.status || "").trim().toUpperCase() !== "NOC") return false;
+  if (sourceStatusIntent(payload) === "NOC") return false;
+
+  payload.status = "NOC";
+  payload.driveRestriction = existing.driveRestriction;
+  payload.source.rowHash = crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex");
+  return true;
+}
+
+function preserveAttendanceRestriction(payload, existing) {
+  if (String(existing?.status || "").trim().toUpperCase() === "NOC") return false;
+  if (!existing?.driveRestriction || existing.driveRestriction.status !== "STUCK_OFF") return false;
+  if (sourceStatusIntent(payload)) return false;
+
+  payload.driveRestriction = existing.driveRestriction;
+  payload.status = existing.status || "Struck Off";
+  payload.source.rowHash = crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex");
+  return true;
 }
 
 function studentMatch(payload) {
@@ -260,16 +375,18 @@ async function runSync() {
       console.log("CSV parsed successfully! Number of rows:", rows.length);
       summary.totalRows = rows.length;
 
-      // Delete existing students for this connection to do a fresh sync
-      await Student.deleteMany({ "source.connection": connection._id });
-      console.log(`Cleared existing students for connection ${connection._id} from database.`);
+      console.log(`Syncing existing students for connection ${connection._id} without clearing computed drive restrictions.`);
 
       for (let index = 0; index < rows.length; index += 1) {
         try {
           const payload = buildStudentPayload(rows[index], connection.columnMapping || {}, connection, index + 2);
           const match = studentMatch(payload);
           
-          const existing = await Student.findOne(match);
+              const existing = await Student.findOne(match);
+              applySheetStatusIntent(payload, existing);
+              const preservedNoc = existing ? preserveManualNoc(payload, existing) : false;
+          const preservedRestriction = !preservedNoc && existing ? preserveAttendanceRestriction(payload, existing) : false;
+          finalizeStudentPayload(payload);
           if (!existing) {
             await Student.create({ ...payload, createdBy: new mongoose.Types.ObjectId("6a5b76765b198b02d0142a1f") });
             summary.newRecords += 1;
@@ -277,9 +394,16 @@ async function runSync() {
             existing.sourceStatus = "SYNCED";
             existing.source.lastSeenAt = new Date();
             await existing.save();
+            if (preservedRestriction) {
+              await triggerSpreadsheetUpdate(existing, { statusOnly: true, skipNoc: true });
+            }
             summary.unchangedRecords += 1;
           } else {
             await Student.updateOne({ _id: existing._id }, { $set: payload });
+            if (preservedRestriction) {
+              const updatedStudent = await Student.findById(existing._id);
+              await triggerSpreadsheetUpdate(updatedStudent, { statusOnly: true, skipNoc: true });
+            }
             summary.updatedRecords += 1;
           }
           

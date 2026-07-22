@@ -32,7 +32,14 @@ export function AuthProvider({ children }) {
     return data;
   }
 
-  function logout() {
+  async function logout() {
+    try {
+      if (localStorage.getItem("eligibleFlowToken")) {
+        await api("/auth/logout", { method: "POST" });
+      }
+    } catch {
+      // Local logout still clears this browser even if the server is unreachable.
+    }
     localStorage.removeItem("eligibleFlowToken");
     setUser(null);
   }

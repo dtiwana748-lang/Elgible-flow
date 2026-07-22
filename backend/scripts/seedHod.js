@@ -8,7 +8,10 @@ const email = process.env.SEED_HOD_EMAIL;
 const existing = await User.findOne({ email });
 
 if (existing) {
-  console.log(`HOD already exists: ${email}`);
+  existing.name = process.env.SEED_HOD_NAME || "Head of Department";
+  existing.passwordHash = await User.hashPassword(process.env.SEED_HOD_PASSWORD);
+  await existing.save();
+  console.log(`Updated existing HOD account credentials: ${email}`);
   process.exit(0);
 }
 

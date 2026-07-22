@@ -4,6 +4,7 @@ import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { User } from "../models/User.js";
 import { signToken } from "../utils/tokens.js";
@@ -69,6 +70,8 @@ const loginSchema = z.object({
   password: z.string().min(8)
 });
 
+const SESSION_IDLE_MS = 12 * 60 * 60 * 1000;
+
 router.post("/login", async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: "Valid email and password are required" });
@@ -78,17 +81,29 @@ router.post("/login", async (req, res) => {
 
   const matched = await user.comparePassword(parsed.data.password);
   if (!matched) return res.status(401).json({ message: "Invalid credentials" });
+  const sessionId = crypto.randomBytes(24).toString("hex");
   user.lastLoginAt = new Date();
+  user.lastSeenAt = new Date();
+  user.activeSessionId = sessionId;
+  user.sessionExpiresAt = new Date(Date.now() + SESSION_IDLE_MS);
   await user.save();
 
   res.json({
-    token: signToken(user),
-    user: { id: user._id, name: user.name, email: user.email, role: user.role, profileImage: user.profileImage }
+    token: signToken(user, sessionId),
+    user: { id: user._id, name: user.name, email: user.email, role: user.role, profileImage: user.profileImage, personalEmail: user.personalEmail, phone: user.phone }
   });
 });
 
+router.post("/logout", requireAuth, async (req, res) => {
+  req.user.activeSessionId = undefined;
+  req.user.sessionExpiresAt = undefined;
+  req.user.lastSeenAt = new Date();
+  await req.user.save();
+  res.json({ message: "Logged out" });
+});
+
 router.get("/me", requireAuth, (req, res) => {
-  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail });
+  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, phone: req.user.phone });
 });
 
 router.patch("/me", requireAuth, async (req, res) => {
@@ -96,7 +111,8 @@ router.patch("/me", requireAuth, async (req, res) => {
     name: z.string().min(2).max(80),
     email: z.string().email(),
     profileImage: z.string().max(300).optional().or(z.literal("")),
-    personalEmail: z.string().email().optional().or(z.literal(""))
+    personalEmail: z.string().email().optional().or(z.literal("")),
+    phone: z.string().max(20).optional().or(z.literal(""))
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: "Profile details are invalid" });
 
@@ -104,9 +120,10 @@ router.patch("/me", requireAuth, async (req, res) => {
   req.user.email = parsed.data.email.toLowerCase();
   req.user.profileImage = parsed.data.profileImage || undefined;
   req.user.personalEmail = parsed.data.personalEmail || undefined;
+  req.user.phone = parsed.data.phone || undefined;
   await req.user.save();
   await writeAudit({ actor: req.user._id, action: "PROFILE_UPDATED", entity: "User", entityId: req.user._id });
-  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail });
+  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, phone: req.user.phone });
 });
 
 router.post("/me/photo", requireAuth, upload.single("photo"), async (req, res) => {
@@ -121,7 +138,7 @@ router.post("/me/photo", requireAuth, upload.single("photo"), async (req, res) =
   }
   await req.user.save();
   await writeAudit({ actor: req.user._id, action: "PROFILE_PHOTO_UPDATED", entity: "User", entityId: req.user._id, metadata: { uploadProvider } });
-  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, uploadProvider });
+  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, phone: req.user.phone, uploadProvider });
 });
 
 export default router;

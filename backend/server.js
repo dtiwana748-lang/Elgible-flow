@@ -73,9 +73,10 @@ app.use(cors({
     // Otherwise block it
     return callback(new Error("Origin is not allowed by CORS"), false);
   },
-  credentials: true
+  credentials: true,
+  exposedHeaders: ["X-Auth-Token"]
 }));
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "50mb" }));
 app.use(morgan("dev"));
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 500 }));
 

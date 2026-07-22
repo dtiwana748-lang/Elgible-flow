@@ -30,6 +30,7 @@ export function calculateCGPA(student) {
 
 export function calculateEligibility(student, criteria = {}) {
   const reasons = [];
+  const notes = [];
   let eligible = true;
   const metric = (value) => {
     const number = Number(value) || 0;
@@ -57,6 +58,11 @@ export function calculateEligibility(student, criteria = {}) {
     requiredPackageMultiple = 1.5,
     requiredPackageCtc = 0
   } = criteria;
+
+  const isNoc = String(student.status || "").trim().toUpperCase() === "NOC";
+  if (isNoc) {
+    notes.push("Student has NOC status");
+  }
 
   // Check CGPA
   if (Number(cgpaMin) > 0 && Number(student.cgpa) < Number(cgpaMin)) {
@@ -138,12 +144,12 @@ export function calculateEligibility(student, criteria = {}) {
     reasons.push(`Attendance too low (${student.attendance} < ${attendanceMin})`);
   }
 
-  // Check stuck-off status
+  // Check Struck Off status
   const isStuckOff = student.driveRestriction?.status === "STUCK_OFF" ||
                      ["stuck off", "struck off", "stuck_off", "struck_off"].includes(String(student.status || "").toLowerCase());
   if (!allowStuckOff && isStuckOff) {
     eligible = false;
-    reasons.push("Student is stuck-off");
+    reasons.push("Student is Struck Off");
   }
 
   // Check package criterion: if requiredPackageCtc is set and student is placed,
@@ -159,7 +165,7 @@ export function calculateEligibility(student, criteria = {}) {
 
   return {
     status: eligible ? "ELIGIBLE" : "NOT_ELIGIBLE",
-    reasons: eligible ? ["Meets all eligibility criteria"] : reasons,
+    reasons: eligible ? ["Meets all eligibility criteria", ...notes] : [...reasons, ...notes],
     student
   };
 }

@@ -6,18 +6,22 @@ import { requireAuth, requireRole } from "../middleware/auth.js";
 import { SpreadsheetConnection } from "../models/SpreadsheetConnection.js";
 import { SpreadsheetSyncLog } from "../models/SpreadsheetSyncLog.js";
 import { Student } from "../models/Student.js";
+import { DriveStudent } from "../models/DriveStudent.js";
 import { writeAudit } from "../utils/audit.js";
 import { calculateCGPA } from "../utils/studentRules.js";
 import { runBackgroundSync } from "../utils/autoSync.js";
+import { triggerSpreadsheetUpdate } from "../utils/spreadsheetSync.js";
 
 const router = Router();
+
+const asyncHandler = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
 const systemFields = new Set([
   "rollNo", "enrollmentNo", "registrationNo", "grNo", "universityId", "name", "email", "phone",
   "fatherContactNo", "batch", "admissionYear", "passingYear", "department", "course", "program",
   "branch", "specialization", "semester", "section", "cgpa", "percentage", "tenthPercentage",
   "tenthPassingYear", "twelfthPercentage", "twelfthPassingYear", "diplomaPercentage",
-  "graduationPercentage", "pgStreams", "activeBacklogs", "totalBacklogs", "attendance",
+  "graduationPercentage", "pgStreams", "backlogs", "activeBacklogs", "totalBacklogs", "attendance",
   "category", "gender", "dob", "domicileCity", "domicileState", "address", "college",
   "placementStatus", "resumeUrl", "status"
 ]);
@@ -41,9 +45,13 @@ function normalizeNumber(value) {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value === "number") return value;
   let clean = String(value).trim();
+  if (/^(n\/?a|nil|none|no)$/i.test(clean)) return 0;
   if (clean.includes("%")) {
     clean = clean.replace(/%/g, "").trim();
   }
+  clean = clean.replace(/,/g, "");
+  const numericMatch = clean.match(/-?\d+(\.\d+)?/);
+  if (numericMatch) clean = numericMatch[0];
   const number = Number(clean);
   return Number.isFinite(number) ? number : undefined;
 }
@@ -77,9 +85,12 @@ function inferSystemField(header) {
   if (key.includes("average") && key.includes("cgpa")) return "cgpa";
   if (key.includes("cgpa")) return "cgpa";
   if (key.includes("attendance")) return "attendance";
-  if (key.includes("activebacklog")) return "activeBacklogs";
-  if (key.includes("totalbacklog")) return "totalBacklogs";
+  if (key.includes("activebacklog") || key.includes("currentbacklog") || key.includes("livebacklog") || key.includes("pendingbacklog")) return "activeBacklogs";
+  if (key.includes("totalbacklog") || key.includes("overallbacklog") || key.includes("historybacklog")) return "totalBacklogs";
   if (key.includes("backlog")) return "backlogs";
+  if ((key.includes("active") || key.includes("current") || key.includes("live") || key.includes("pending")) && key.includes("arrear")) return "activeBacklogs";
+  if ((key.includes("total") || key.includes("overall") || key.includes("history")) && key.includes("arrear")) return "totalBacklogs";
+  if (key.includes("arrear") || key.includes("backpaper") || key.includes("atkt") || key === "kt") return "backlogs";
   if (key.includes("category")) return "category";
   if (key.includes("gender")) return "gender";
   if (key.includes("dob")) return "dob";
@@ -172,6 +183,9 @@ function buildStudentPayload(row, mapping, connection, rowNumber) {
   // Process each mapped column
   for (const [sheetColumn, systemField] of Object.entries(usableMapping)) {
     const raw = sanitizeCell(row[sheetColumn]);
+    if (systemField === "status") {
+      payload._sheetStatusColumnSeen = true;
+    }
     if (!systemField || systemField === "customFields") {
       payload.customFields[sheetColumn] = raw;
     } else if (systemField.startsWith("semester.")) {
@@ -237,8 +251,26 @@ function buildStudentPayload(row, mapping, connection, rowNumber) {
   // Use row number + connection ID to guarantee uniqueness, even if other fields are missing!
   payload.studentId = payload.enrollmentNo || payload.registrationNo || payload.grNo || payload.universityId || payload.rollNo || payload.email || `${connection._id.toString()}-row-${rowNumber}`;
   payload.source.rowHash = crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex");
+  removeBlankUniqueIdentifiers(payload);
   
   return payload;
+}
+
+function removeBlankUniqueIdentifiers(payload) {
+  for (const field of ["rollNo", "enrollmentNo", "registrationNo", "grNo", "universityId", "email"]) {
+    if (payload[field] !== undefined && payload[field] !== null && !String(payload[field]).trim()) {
+      delete payload[field];
+    }
+  }
+  if (!payload.studentId || !String(payload.studentId).trim()) {
+    payload.studentId = `${payload.source.connection.toString()}-row-${payload.source.rowNumber}`;
+  }
+  payload.source.rowHash = crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex");
+}
+
+function finalizeStudentPayload(payload) {
+  delete payload._sheetStatusColumnSeen;
+  removeBlankUniqueIdentifiers(payload);
 }
 
 function studentMatch(payload) {
@@ -254,15 +286,89 @@ function studentMatch(payload) {
   return { studentId: payload.studentId };
 }
 
+function sourceStatusIntent(payload) {
+  const normalizedStatus = String(payload.status || "").trim().toLowerCase();
+  if (normalizedStatus === "noc") return "NOC";
+  if (["stuck off", "struck off", "stuck_off", "struck_off"].includes(normalizedStatus)) return "STUCK_OFF";
+  if (normalizedStatus === "active" || normalizedStatus === "clear") return "CLEAR";
+  if (payload._sheetStatusColumnSeen && !normalizedStatus) return "CLEAR";
+  return null;
+}
+
+function applySheetStatusIntent(payload, existing) {
+  const intent = sourceStatusIntent(payload);
+  if (!intent) return;
+
+  if (intent === "NOC") {
+    if (String(existing?.status || "").trim().toUpperCase() === "NOC") {
+      payload.status = "NOC";
+      payload.driveRestriction = existing.driveRestriction;
+    } else {
+      payload.status = existing?.status || "Active";
+    }
+    return;
+  }
+
+  if (String(existing?.status || "").trim().toUpperCase() === "NOC") {
+    payload.status = "NOC";
+    payload.driveRestriction = existing.driveRestriction;
+    return;
+  }
+
+  if (intent === "STUCK_OFF") {
+    payload.status = "Struck Off";
+    payload.driveRestriction = {
+      ...(payload.driveRestriction || {}),
+      status: "STUCK_OFF",
+      reason: "Marked Struck Off from synced master sheet status column.",
+      updatedAt: new Date()
+    };
+  } else if (intent === "CLEAR") {
+    payload.status = "Active";
+    payload.driveRestriction = {
+      ...(payload.driveRestriction || {}),
+      status: "CLEAR",
+      reason: "Marked clear from synced master sheet status column.",
+      updatedAt: new Date(),
+      clearedAt: new Date()
+    };
+  }
+}
+
+function preserveManualNoc(payload, existing) {
+  if (String(existing?.status || "").trim().toUpperCase() !== "NOC") return false;
+  if (sourceStatusIntent(payload) === "NOC") return false;
+
+  payload.status = "NOC";
+  payload.driveRestriction = existing.driveRestriction;
+  payload.source.rowHash = crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex");
+  return true;
+}
+
+function preserveAttendanceRestriction(payload, existing) {
+  if (String(existing?.status || "").trim().toUpperCase() === "NOC") return false;
+  if (!existing?.driveRestriction || existing.driveRestriction.status !== "STUCK_OFF") return false;
+  if (sourceStatusIntent(payload)) return false;
+
+  payload.driveRestriction = existing.driveRestriction;
+  payload.status = existing.status || "Struck Off";
+  payload.source.rowHash = crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex");
+  return true;
+}
+
 async function fetchCsv(connection) {
   const url = `https://docs.google.com/spreadsheets/d/${connection.sheetId}/export?format=csv&gid=${connection.gid || "0"}`;
   const response = await fetch(url);
-  if (!response.ok) throw new Error("Google Sheet is not accessible. Check sharing permissions.");
+  if (!response.ok) {
+    const error = new Error("Google Sheet is not accessible. Please set sharing to anyone with the link can view, then test again.");
+    error.status = 400;
+    throw error;
+  }
   return response.text();
 }
 
 // Webhook endpoint for live real-time sync from Google Sheets
-router.post("/webhook-sync", async (req, res) => {
+router.post("/webhook-sync", asyncHandler(async (req, res) => {
   const { sheetId, batch } = req.query;
   const filter = {};
   if (sheetId) filter.sheetId = sheetId;
@@ -276,17 +382,23 @@ router.post("/webhook-sync", async (req, res) => {
   // Trigger sync asynchronously in background
   runBackgroundSync();
   res.json({ message: "Sync triggered via live spreadsheet webhook", matchedConnections: connections.length });
-});
+}));
 
 router.use(requireAuth);
 
-router.get("/connection", requireRole("HOD"), async (_req, res) => {
-  const connections = await SpreadsheetConnection.find().sort({ batch: 1 });
+router.get("/connection", requireRole("HOD"), asyncHandler(async (_req, res) => {
+  const connections = await SpreadsheetConnection.find().sort({ batch: 1 }).lean();
   const logs = await SpreadsheetSyncLog.find().sort({ createdAt: -1 }).limit(10);
-  res.json({ connections, logs });
-});
+  const connectionsWithCounts = await Promise.all(connections.map(async (connection) => ({
+    ...connection,
+    syncedRecordCount: await Student.countDocuments({
+      "source.connection": connection._id
+    })
+  })));
+  res.json({ connections: connectionsWithCounts, logs });
+}));
 
-router.post("/connection", requireRole("HOD"), async (req, res) => {
+router.post("/connection", requireRole("HOD"), asyncHandler(async (req, res) => {
   const parsed = z.object({
     sheetUrl: z.string().url(),
     appsScriptUrl: z.string().url().optional().or(z.literal("")),
@@ -315,25 +427,73 @@ router.post("/connection", requireRole("HOD"), async (req, res) => {
   });
   await writeAudit({ actor: req.user._id, action: "SHEET_CONNECTED", entity: "SpreadsheetConnection", entityId: connection._id });
   res.status(201).json(connection);
-});
+}));
 
-router.delete("/connection/:id", requireRole("HOD"), async (req, res) => {
+router.put("/connection/:id", requireRole("HOD"), asyncHandler(async (req, res) => {
+  const parsed = z.object({
+    sheetUrl: z.string().url(),
+    appsScriptUrl: z.string().url().optional().or(z.literal("")),
+    worksheetName: z.string().optional(),
+    batch: z.string().min(1),
+    columnMapping: z.record(z.string()).optional()
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: "Valid Google Sheet URL and Batch are required" });
+
+  const sheetId = extractSheetId(parsed.data.sheetUrl);
+  if (!sheetId) return res.status(400).json({ message: "This does not look like a valid Google Sheet link" });
+
+  const duplicate = await SpreadsheetConnection.findOne({ batch: parsed.data.batch, _id: { $ne: req.params.id } });
+  if (duplicate) return res.status(409).json({ message: `Batch ${parsed.data.batch} already has a connected sheet` });
+
+  const connection = await SpreadsheetConnection.findByIdAndUpdate(req.params.id, {
+    name: `Master Student Sheet - ${parsed.data.batch}`,
+    batch: parsed.data.batch,
+    sheetUrl: parsed.data.sheetUrl,
+    appsScriptUrl: parsed.data.appsScriptUrl || undefined,
+    sheetId,
+    gid: extractGid(parsed.data.sheetUrl),
+    worksheetName: parsed.data.worksheetName || "Sheet1",
+    columnMapping: parsed.data.columnMapping || {}
+  }, { new: true });
+  if (!connection) return res.status(404).json({ message: "Connection not found" });
+
+  await writeAudit({ actor: req.user._id, action: "SHEET_CONNECTION_UPDATED", entity: "SpreadsheetConnection", entityId: connection._id });
+  res.json(connection);
+}));
+
+router.delete("/connection/:id", requireRole("HOD"), asyncHandler(async (req, res) => {
   const connection = await SpreadsheetConnection.findByIdAndDelete(req.params.id);
   if (!connection) return res.status(404).json({ message: "Connection not found" });
-  await writeAudit({ actor: req.user._id, action: "SHEET_DISCONNECTED", entity: "SpreadsheetConnection", entityId: connection._id });
-  res.json({ message: "Connection disconnected successfully" });
-});
+  const students = await Student.find({ "source.connection": connection._id }).select("_id").lean();
+  const studentIds = students.map((student) => student._id);
+  const [studentDelete, driveStudentDelete] = await Promise.all([
+    Student.deleteMany({ _id: { $in: studentIds } }),
+    DriveStudent.deleteMany({ student: { $in: studentIds } }),
+    SpreadsheetSyncLog.deleteMany({ connection: connection._id })
+  ]);
+  await writeAudit({
+    actor: req.user._id,
+    action: "SHEET_DISCONNECTED",
+    entity: "SpreadsheetConnection",
+    entityId: connection._id,
+    metadata: {
+      deletedStudents: studentDelete.deletedCount || 0,
+      deletedDriveMappings: driveStudentDelete.deletedCount || 0
+    }
+  });
+  res.json({ message: `Connection disconnected successfully. Removed ${studentDelete.deletedCount || 0} imported students.` });
+}));
 
-router.post("/connection/test", requireRole("HOD"), async (req, res) => {
+router.post("/connection/test", requireRole("HOD"), asyncHandler(async (req, res) => {
   const sheetId = extractSheetId(req.body.sheetUrl || "");
   if (!sheetId) return res.status(400).json({ message: "Valid Google Sheet URL is required" });
   const connection = { sheetId, gid: extractGid(req.body.sheetUrl) };
   const csv = await fetchCsv(connection);
   const rows = parse(csv, { columns: true, skip_empty_lines: true, trim: true });
   res.json({ headers: rows.length ? Object.keys(rows[0]) : [], sampleRows: rows.slice(0, 5), totalRows: rows.length });
-});
+}));
 
-router.post("/connection/:id/sync", requireRole("HOD"), async (req, res) => {
+router.post("/connection/:id/sync", requireRole("HOD"), asyncHandler(async (req, res) => {
   const connection = await SpreadsheetConnection.findById(req.params.id);
   if (!connection) return res.status(404).json({ message: "Sheet connection not found" });
   const log = await SpreadsheetSyncLog.create({ connection: connection._id, startedBy: req.user._id });
@@ -351,7 +511,7 @@ router.post("/connection/:id/sync", requireRole("HOD"), async (req, res) => {
     
     for (let index = 0; index < rows.length; index += 1) {
       try {
-        const payload = buildStudentPayload(rows[index], connection.columnMapping || {}, connection._id, index + 2);
+        const payload = buildStudentPayload(rows[index], connection.columnMapping || {}, connection, index + 2);
         const match = studentMatch(payload);
         
         if (index < 5) { // Log first 5 payloads for debugging
@@ -360,6 +520,10 @@ router.post("/connection/:id/sync", requireRole("HOD"), async (req, res) => {
         }
         
         const existing = await Student.findOne(match);
+        applySheetStatusIntent(payload, existing);
+        const preservedNoc = existing ? preserveManualNoc(payload, existing) : false;
+        const preservedRestriction = !preservedNoc && existing ? preserveAttendanceRestriction(payload, existing) : false;
+        finalizeStudentPayload(payload);
         
         if (!existing) {
           await Student.create({ ...payload, createdBy: req.user._id });
@@ -372,6 +536,10 @@ router.post("/connection/:id/sync", requireRole("HOD"), async (req, res) => {
           summary.unchangedRecords += 1;
         } else {
           await Student.updateOne({ _id: existing._id }, { $set: payload });
+          if (preservedRestriction) {
+            const updatedStudent = await Student.findById(existing._id);
+            await triggerSpreadsheetUpdate(updatedStudent, { statusOnly: true, skipNoc: true });
+          }
           summary.updatedRecords += 1;
         }
         
@@ -411,6 +579,6 @@ router.post("/connection/:id/sync", requireRole("HOD"), async (req, res) => {
     await log.save();
     res.status(400).json({ message: error.message });
   }
-});
+}));
 
 export default router;

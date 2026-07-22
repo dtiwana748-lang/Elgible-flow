@@ -1,16 +1,18 @@
 export function calculateDriveAttendance(registrationStatus, roundHistory = []) {
-  if (registrationStatus !== "REGISTERED") {
-    return {
-      overallAttendanceStatus: "OVERALL_ABSENT",
-      overallAttendanceReason: "Student did not register for this drive, so the drive is counted as absent."
-    };
-  }
-
   const hasPresentProcess = roundHistory.some((round) => ["PRESENT", "QUALIFIED"].includes(round.status));
   if (hasPresentProcess) {
     return {
       overallAttendanceStatus: "OVERALL_PRESENT",
-      overallAttendanceReason: "Student registered and was present in at least one drive process."
+      overallAttendanceReason: registrationStatus === "REGISTERED"
+        ? "Student registered and was present in at least one drive process."
+        : "Student was not registered, but was present in an uploaded drive process."
+    };
+  }
+
+  if (registrationStatus !== "REGISTERED") {
+    return {
+      overallAttendanceStatus: "OVERALL_ABSENT",
+      overallAttendanceReason: "Student did not register for this drive, so the drive is counted as absent."
     };
   }
 

@@ -46,7 +46,9 @@ const studentSchema = new mongoose.Schema(
     driveRestriction: {
       status: { type: String, enum: ["CLEAR", "STUCK_OFF"], default: "CLEAR", index: true },
       absentDriveCount: { type: Number, default: 0 },
+      consecutiveAbsentCount: { type: Number, default: 0 },
       reason: String,
+      clearedAt: Date,
       updatedAt: Date
     },
     resumeUrl: { type: String, trim: true },

@@ -1,6 +1,27 @@
 import { SpreadsheetConnection } from "../models/SpreadsheetConnection.js";
 
-export async function triggerSpreadsheetUpdate(student) {
+function normalizeHeader(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function displayStatusForSheet(studentObj) {
+  if (String(studentObj.status || "").trim().toUpperCase() === "NOC") return "NOC";
+  if (studentObj.driveRestriction?.status === "STUCK_OFF") return "Struck Off";
+  if (String(studentObj.status || "").trim()) return studentObj.status;
+  return "Active";
+}
+
+function statusColumnsFromMapping(mapping) {
+  const columns = new Set();
+  for (const [sheetCol, systemField] of Object.entries(mapping || {})) {
+    const normalized = normalizeHeader(sheetCol);
+    if (systemField === "status" || normalized === "status") columns.add(sheetCol);
+  }
+  columns.add("Status");
+  return Array.from(columns);
+}
+
+export async function triggerSpreadsheetUpdate(student, options = {}) {
   if (!student || !student.source || !student.source.connection || !student.source.rowNumber) {
     return;
   }
@@ -23,33 +44,58 @@ export async function triggerSpreadsheetUpdate(student) {
 
     const rowData = {};
     const studentObj = student.toObject ? student.toObject() : student;
+    const sheetStatus = displayStatusForSheet(studentObj);
 
-    for (const [field, value] of Object.entries(studentObj)) {
-      if (reverseMapping[field]) {
-        rowData[reverseMapping[field]] = value;
-      }
+    if (options.skipNoc && sheetStatus === "NOC") {
+      console.log(`[SpreadsheetSync] Skipped write-back for NOC student ${student.name}.`);
+      return;
     }
 
-    if (studentObj.semesters) {
-      for (const [semNum, semData] of Object.entries(studentObj.semesters)) {
-        for (const [subField, value] of Object.entries(semData || {})) {
-          const key = `semester.${semNum}.${subField}`;
-          if (reverseMapping[key]) {
-            rowData[reverseMapping[key]] = value;
+    if (options.statusOnly) {
+      for (const column of statusColumnsFromMapping(mapping)) {
+        rowData[column] = sheetStatus;
+      }
+    } else {
+      for (const [field, value] of Object.entries(studentObj)) {
+        if (reverseMapping[field]) {
+          rowData[reverseMapping[field]] = value;
+        }
+      }
+
+      if (studentObj.semesters) {
+        for (const [semNum, semData] of Object.entries(studentObj.semesters)) {
+          for (const [subField, value] of Object.entries(semData || {})) {
+            const key = `semester.${semNum}.${subField}`;
+            if (reverseMapping[key]) {
+              rowData[reverseMapping[key]] = value;
+            }
           }
         }
       }
+
+      for (const column of statusColumnsFromMapping(mapping)) {
+        rowData[column] = sheetStatus;
+      }
     }
 
-    console.log(`[SpreadsheetSync] Syncing update for ${student.name} to Google Sheet row ${student.source.rowNumber}...`);
+    console.log(`[SpreadsheetSync] Syncing ${options.statusOnly ? "status" : "row"} update for ${student.name} to Google Sheet row ${student.source.rowNumber}...`);
 
     const response = await fetch(appsScriptUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        action: "update",
+        action: options.statusOnly ? "updateStatus" : "update",
         rowNumber: student.source.rowNumber,
         mapping,
+        match: {
+          grNo: studentObj.grNo || "",
+          rollNo: studentObj.rollNo || "",
+          enrollmentNo: studentObj.enrollmentNo || "",
+          registrationNo: studentObj.registrationNo || "",
+          universityId: studentObj.universityId || "",
+          email: studentObj.email || "",
+          name: studentObj.name || ""
+        },
         data: rowData
       })
     });

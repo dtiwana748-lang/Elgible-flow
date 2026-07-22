@@ -10,6 +10,7 @@ import { filterEligibleStudents, calculateEligibility } from "../utils/studentRu
 import { writeAudit } from "../utils/audit.js";
 
 const router = Router();
+const masterStudentFilter = { "source.connection": { $exists: true, $ne: null } };
 
 function formatCgpa(value) {
   if (value === undefined || value === null || value === "") return "";
@@ -20,10 +21,10 @@ function formatCgpa(value) {
 // Get unique master data options for courses, departments, batches, programs
 router.get("/options/master-data", requireAuth, async (req, res) => {
   const [courses, departments, batches, programs] = await Promise.all([
-    Student.distinct("course"),
-    Student.distinct("department"),
-    Student.distinct("batch"),
-    Student.distinct("program"),
+    Student.distinct("course", masterStudentFilter),
+    Student.distinct("department", masterStudentFilter),
+    Student.distinct("batch", masterStudentFilter),
+    Student.distinct("program", masterStudentFilter),
   ]);
   
   res.json({
@@ -64,27 +65,45 @@ router.get("/", requireAuth, async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 20, 5), 100);
   const sortBy = req.query.sortBy || "createdAt";
   const sortDir = req.query.sortDir === "asc" ? 1 : -1;
-  const filter = {};
+  const filter = req.user.role === "HOD" ? {} : { createdBy: req.user._id };
   if (req.query.status) filter.status = req.query.status;
   
-  const [items, total] = await Promise.all([
+  const [rawItems, total, totalMasterStudents] = await Promise.all([
     EligibilityList.find(filter)
       .populate("createdBy", "name email")
       .sort({ [sortBy]: sortDir })
       .skip((page - 1) * limit)
-      .limit(limit),
-    EligibilityList.countDocuments(filter)
+      .limit(limit)
+      .lean(),
+    EligibilityList.countDocuments(filter),
+    Student.countDocuments(masterStudentFilter)
   ]);
+  const items = await Promise.all(rawItems.map(async (item) => {
+    const [totalEligible, totalNotEligible] = await Promise.all([
+      Student.countDocuments({ ...masterStudentFilter, _id: { $in: item.eligibleStudents || [] } }),
+      Student.countDocuments({ ...masterStudentFilter, _id: { $in: item.notEligibleStudents || [] } })
+    ]);
+    return {
+      ...item,
+      eligibilityBreakdown: {
+        ...(item.eligibilityBreakdown || {}),
+        totalChecked: totalMasterStudents,
+        totalEligible,
+        totalNotEligible
+      }
+    };
+  }));
   
   res.json({ items, total, page, pages: Math.ceil(total / limit) });
 });
 
 // Get single eligibility list with students
 router.get("/:id", requireAuth, async (req, res) => {
-  const list = await EligibilityList.findById(req.params.id)
+  const listFilter = req.user.role === "HOD" ? { _id: req.params.id } : { _id: req.params.id, createdBy: req.user._id };
+  const list = await EligibilityList.findOne(listFilter)
     .populate("createdBy", "name email")
-    .populate("eligibleStudents", "rollNo name email department course batch cgpa")
-    .populate("notEligibleStudents", "rollNo name email department course batch cgpa");
+    .populate({ path: "eligibleStudents", match: masterStudentFilter, select: "rollNo enrollmentNo registrationNo universityId name email department course batch cgpa status driveRestriction" })
+    .populate({ path: "notEligibleStudents", match: masterStudentFilter, select: "rollNo enrollmentNo registrationNo universityId name email department course batch cgpa status driveRestriction" });
   
   if (!list) return res.status(404).json({ message: "List not found" });
 
@@ -99,7 +118,8 @@ router.get("/:id", requireAuth, async (req, res) => {
   let driveStudentsMap = {};
 
   if (list.companyName) {
-    const drive = await Drive.findOne({ companyName: list.companyName });
+    const driveFilter = req.user.role === "HOD" ? { companyName: list.companyName } : { companyName: list.companyName, createdBy: list.createdBy };
+    const drive = await Drive.findOne(driveFilter);
     if (drive) {
       const eligibleIds = (list.eligibleStudents || []).map(s => s._id);
       const driveStudents = await DriveStudent.find({
@@ -135,8 +155,12 @@ router.get("/:id", requireAuth, async (req, res) => {
 
   // Attach registration status for eligible students on the fly
   const eligibleStudentsWithRegistration = (list.eligibleStudents || []).map(student => {
+    const plainStudent = student.toObject ? student.toObject() : student;
+    const eligibilityResult = calculateEligibility(plainStudent, criteria);
     return {
-      ...(student.toObject ? student.toObject() : student),
+      ...plainStudent,
+      reasons: eligibilityResult.reasons,
+      hasNoc: String(plainStudent.status || "").trim().toUpperCase() === "NOC",
       registrationStatus: driveStudentsMap[student._id.toString()] || "NOT_REGISTERED"
     };
   });
@@ -184,7 +208,7 @@ router.post("/", requireAuth, async (req, res) => {
   }
   
   const criteria = parseCriteria(parsed.data);
-  const students = await Student.find({}).lean();
+  const students = await Student.find(masterStudentFilter).lean();
   
   // Calculate eligibility for all students
   const allResults = filterEligibleStudents(students, criteria);
@@ -218,7 +242,7 @@ router.post("/", requireAuth, async (req, res) => {
     eligibilityBreakdown: breakdown,
     createdBy: req.user._id,
     status: "DRAFT",
-    companyName: parsed.data.companyName,
+    companyName: parsed.data.companyName || parsed.data.name,
     jobRole: parsed.data.jobRole,
     packageCtc: parsed.data.packageCtc !== undefined && parsed.data.packageCtc !== "" ? Number(parsed.data.packageCtc) : undefined
   });
@@ -232,24 +256,28 @@ router.post("/", requireAuth, async (req, res) => {
   });
   
   // Populate students for response
-  await eligibilityList.populate("eligibleStudents notEligibleStudents", "rollNo name email department course batch cgpa");
+  await eligibilityList.populate("eligibleStudents notEligibleStudents", "rollNo enrollmentNo registrationNo universityId name email department course batch cgpa");
   
   res.status(201).json(eligibilityList);
 });
 
 // Export eligibility list to Excel
 router.get("/:id/export", requireAuth, async (req, res) => {
-  const list = await EligibilityList.findById(req.params.id)
-    .populate("eligibleStudents", "rollNo name email department batch cgpa");
+  const listFilter = req.user.role === "HOD" ? { _id: req.params.id } : { _id: req.params.id, createdBy: req.user._id };
+  const list = await EligibilityList.findOne(listFilter)
+    .populate({ path: "eligibleStudents", match: masterStudentFilter, select: "rollNo enrollmentNo registrationNo universityId name email department course batch cgpa" });
   
   if (!list) return res.status(404).json({ message: "List not found" });
   
   const eligibleStudents = list.eligibleStudents || [];
-  const rows = eligibleStudents.map(student => ({
+  const rows = eligibleStudents.map((student, index) => ({
+    "Sr No": index + 1,
     "Roll No": student.rollNo || "",
+    "Enrollment No": student.enrollmentNo || student.registrationNo || student.universityId || "",
     "Name": student.name || "",
     "Email": student.email || "",
     "Department": student.department || "",
+    "Course": student.course || "",
     "Batch": student.batch || "",
     "CGPA": formatCgpa(student.cgpa)
   }));
@@ -257,10 +285,13 @@ router.get("/:id/export", requireAuth, async (req, res) => {
   const workbook = xlsx.utils.book_new();
   const worksheet = xlsx.utils.json_to_sheet(rows);
   worksheet["!cols"] = [
+    { wch: 8 },
+    { wch: 18 },
     { wch: 18 },
     { wch: 28 },
     { wch: 34 },
     { wch: 22 },
+    { wch: 16 },
     { wch: 12 },
     { wch: 10 }
   ];
@@ -273,9 +304,26 @@ router.get("/:id/export", requireAuth, async (req, res) => {
   res.send(buffer);
 });
 
+router.delete("/:id", requireAuth, async (req, res) => {
+  const listFilter = req.user.role === "HOD" ? { _id: req.params.id } : { _id: req.params.id, createdBy: req.user._id };
+  const list = await EligibilityList.findOne(listFilter);
+  if (!list) return res.status(404).json({ message: "List not found" });
+
+  await EligibilityList.deleteOne({ _id: list._id });
+  await writeAudit({
+    actor: req.user._id,
+    action: "ELIGIBILITY_LIST_DELETED",
+    entity: "EligibilityList",
+    entityId: list._id,
+    metadata: { listName: list.name, status: list.status }
+  });
+
+  res.json({ message: "Eligibility list deleted successfully" });
+});
+
 // Finalize list
 router.patch("/:id/finalize", requireAuth, async (req, res) => {
-  const list = await EligibilityList.findById(req.params.id);
+  const list = await EligibilityList.findOne({ _id: req.params.id, createdBy: req.user._id });
   if (!list) return res.status(404).json({ message: "List not found" });
   
   list.status = "FINALIZED";

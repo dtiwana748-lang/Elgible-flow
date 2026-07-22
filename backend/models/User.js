@@ -15,7 +15,10 @@ const userSchema = new mongoose.Schema(
     designation: { type: String, trim: true },
     profileImage: { type: String, trim: true },
     assignedBatches: [{ type: String, trim: true }],
-    lastLoginAt: Date
+    lastLoginAt: Date,
+    activeSessionId: { type: String, select: false },
+    sessionExpiresAt: { type: Date, select: false },
+    lastSeenAt: Date
   },
   { timestamps: true }
 );
