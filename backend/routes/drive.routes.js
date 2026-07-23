@@ -268,6 +268,13 @@ function isKnownHeader(value) {
 }
 
 function segmentHeaderRanges(row) {
+  const identityHeaders = row
+    .map(canonicalAttendanceHeader)
+    .filter((header) => ["Roll No", "Student Name", "Student Email ID"].includes(header));
+  // Status values such as "Eligible" and "Registered" occur in every data row.
+  // A real table heading must also identify the student columns.
+  if (!identityHeaders.length) return [];
+
   const ranges = [];
   let start = null;
   let known = 0;
@@ -287,9 +294,6 @@ function segmentHeaderRanges(row) {
     .map((value, index) => cellText(value) ? index : -1)
     .filter((index) => index >= 0);
   const knownCount = row.filter((value) => isKnownHeader(value)).length;
-  const identityHeaders = row
-    .map(canonicalAttendanceHeader)
-    .filter((header) => ["Roll No", "Student Name", "Student Email ID"].includes(header));
   const hasRepeatedIdentityHeader = new Set(identityHeaders).size !== identityHeaders.length;
   // Treat one visual header row as one table even when it contains spacer columns.
   // This keeps Registered and process columns attached to Roll No/Student Name.
@@ -303,24 +307,28 @@ function segmentHeaderRanges(row) {
 function looksLikeHeaderInRange(row, range) {
   let known = 0;
   let filled = 0;
+  let identity = 0;
   for (let col = range.start; col <= range.end; col += 1) {
     const text = cellText(row[col]);
     if (!text) continue;
     filled += 1;
     if (isKnownHeader(text)) known += 1;
+    if (["Roll No", "Student Name", "Student Email ID"].includes(canonicalAttendanceHeader(text))) identity += 1;
   }
-  return filled >= 2 && known >= 2;
+  return filled >= 2 && known >= 2 && identity >= 1;
 }
 
 function findPlacementOfficers(matrix) {
   const names = new Set();
+  const rejectedValues = new Set(["result", "status", "name", "eligible", "registered", "notregistered", "inprocess"]);
   for (const row of matrix.slice(0, 8)) {
     for (let col = 0; col < row.length; col += 1) {
       const text = cellText(row[col]);
       if (!normalizeHeader(text).includes("placementofficer")) continue;
       for (let next = col + 1; next < Math.min(row.length, col + 5); next += 1) {
         const value = cellText(row[next]);
-        if (value && !classifySection(value) && !normalizeHeader(value).includes("date")) {
+        const valueKey = normalizeHeader(value);
+        if (value && !rejectedValues.has(valueKey) && !classifySection(value) && !valueKey.includes("date")) {
           names.add(value);
           break;
         }
@@ -336,7 +344,7 @@ function inferCompanyName(matrix, fileName, companyOverride = "") {
   const reject = [
     "nameoftheplacementofficer", "placementofficer", "eligiblelist", "shortlistedlist", "registered",
     "registration", "attendance", "round", "dateoffloatingofdrive", "date", "srno", "rollno",
-    "studentname", "studentemailid", "course", "branch", "campusname", "nikita"
+    "studentname", "studentemailid", "course", "branch", "campusname", "result", "status", "inprocess", "nikita"
   ];
   for (const row of matrix.slice(0, 3)) {
     for (const value of row) {
@@ -361,7 +369,9 @@ function rowHasDataInRange(row, range) {
 function makeRowIdentity(row) {
   const roll = cleanId(pickColumn(row, ["rollno", "rollnumber", "universityrollnumber", "universityroll"]));
   const email = String(pickColumn(row, ["studentemailid", "studentemail", "emailid", "email", "mail"]) || "").trim().toLowerCase();
-  return roll ? `roll:${roll.toLowerCase()}` : email ? `email:${email}` : "";
+  const company = cellText(pickColumn(row, ["companyname", "company", "organisation", "organization"])).toLowerCase();
+  const studentKey = roll ? `roll:${roll.toLowerCase()}` : email ? `email:${email}` : "";
+  return studentKey ? `${studentKey}|company:${company}` : "";
 }
 
 function isLikelyEmail(value) {
@@ -452,7 +462,9 @@ function rescueRowsFromNoisyMatrix(cleanedMatrix, fallbackCompany, rowMap, order
         Course: course,
         "Campus Name": "",
         Eligibility: "",
-        Registration: emailIndexes.length > 1 || normalizeHeader(rowText).includes("registered") ? "Registered" : "",
+        // Without a detected header, the exact registration column is unknown.
+        // Keep it blank instead of manufacturing a positive registration.
+        Registration: "",
         Attendance: ""
       };
 
@@ -462,10 +474,91 @@ function rescueRowsFromNoisyMatrix(cleanedMatrix, fallbackCompany, rowMap, order
   return rescued;
 }
 
+function normalizeFlatAttendanceTable(cleanedMatrix, fallbackCompany) {
+  const headerRowIndex = cleanedMatrix.findIndex((row) => {
+    const canonical = row.map(canonicalAttendanceHeader);
+    const hasIdentity = canonical.some((header) => ["Roll No", "Student Name", "Student Email ID"].includes(header));
+    const hasCompany = canonical.includes("Company Name");
+    const knownCount = row.filter(isKnownHeader).length;
+    return hasIdentity && hasCompany && knownCount >= 3;
+  });
+  if (headerRowIndex < 0) return null;
+
+  const sourceHeaders = cleanedMatrix[headerRowIndex];
+  const usedHeaders = new Map();
+  const headers = sourceHeaders.map((header, index) => {
+    const base = canonicalAttendanceHeader(header) || `Column ${index + 1}`;
+    const count = usedHeaders.get(base) || 0;
+    usedHeaders.set(base, count + 1);
+    return count ? `${base} ${count + 1}` : base;
+  });
+  const rows = [];
+  const processHeaders = new Set();
+
+  for (let rowIndex = headerRowIndex + 1; rowIndex < cleanedMatrix.length; rowIndex += 1) {
+    const dataRow = cleanedMatrix[rowIndex] || [];
+    if (!dataRow.some((value) => cellText(value))) continue;
+    if (looksLikeHeaderInRange(dataRow, { start: 0, end: Math.max(dataRow.length - 1, 0) })) continue;
+
+    const raw = {};
+    headers.forEach((header, index) => {
+      raw[header] = cellText(dataRow[index]);
+    });
+    const normalized = {
+      "Sr No": rows.length + 1,
+      "Company Name": raw["Company Name"] || fallbackCompany,
+      "Roll No": raw["Roll No"] || "",
+      "Student Name": raw["Student Name"] || "",
+      "Student Email ID": raw["Student Email ID"] || "",
+      Branch: raw.Branch || "",
+      Course: raw.Course || "",
+      "Campus Name": raw["Campus Name"] || "",
+      Eligibility: raw.Eligibility || "",
+      Registration: raw.Registration || "",
+      Attendance: raw.Attendance || ""
+    };
+    for (const [header, value] of Object.entries(raw)) {
+      if (!value) continue;
+      const baseHeader = header.replace(/\s+\d+$/, "");
+      if (["Sr No", "Company Name", "Roll No", "Student Name", "Student Email ID", "Branch", "Course", "Campus Name", "Eligibility", "Registration", "Attendance"].includes(baseHeader)) continue;
+      normalized[header] = value;
+      if (!isMetaAttendanceColumn(header)) processHeaders.add(header);
+    }
+
+    const hasStudent = normalized["Roll No"] || normalized["Student Name"] || normalized["Student Email ID"];
+    if (hasStudent) rows.push(normalized);
+  }
+
+  const fixedHeaders = ["Sr No", "Company Name", "Roll No", "Student Name", "Student Email ID", "Branch", "Course", "Campus Name", "Eligibility", "Registration", "Attendance"];
+  const outputHeaders = [...fixedHeaders, ...Array.from(processHeaders).filter((header) => !fixedHeaders.includes(header))];
+  rows.forEach((row) => outputHeaders.forEach((header) => {
+    if (row[header] === undefined) row[header] = "";
+  }));
+  return { headers: outputHeaders, rows, headerRowIndex };
+}
+
 function normalizeAttendanceRowsFromMatrix(matrix, fileName, companyOverride = "") {
   const cleanedMatrix = (matrix || []).map((row) => Array.isArray(row) ? row.map(cellText) : []);
   const preparedByNames = findPlacementOfficers(cleanedMatrix);
   const fallbackCompany = inferCompanyName(cleanedMatrix, fileName, companyOverride);
+  const flatTable = normalizeFlatAttendanceTable(cleanedMatrix, fallbackCompany);
+  if (flatTable) {
+    return {
+      headers: flatTable.headers,
+      rows: flatTable.rows,
+      normalization: {
+        normalized: true,
+        mode: "FLAT_TABLE",
+        originalRows: cleanedMatrix.length,
+        cleanRows: flatTable.rows.length,
+        rescuedRows: 0,
+        blockCount: 1,
+        sections: [{ sectionName: "Standard Attendance Table", row: flatTable.headerRowIndex + 1 }],
+        preparedByNames,
+        fallbackCompany
+      }
+    };
+  }
   const rowMap = new Map();
   const orderedKeys = [];
   const processHeaders = new Set();
@@ -613,12 +706,18 @@ function normalizeAttendanceStatus(value) {
   return null;
 }
 
-function normalizeRegistrationStatus(value, attendanceStatus) {
+function normalizeRegistrationStatus(value) {
   const text = String(value || "").trim().toLowerCase();
-  if (text.includes("not") || text.includes("unregistered") || text === "no" || text === "n" || text === "0") return "NOT_REGISTERED";
-  if (["registered", "yes", "y", "1", "present"].includes(text) || text.includes("registered") || attendanceStatus === "PRESENT") return "REGISTERED";
-  if (!text && attendanceStatus === "ABSENT") return "NOT_REGISTERED";
-  return "REGISTERED";
+  if (!text) return "NOT_REGISTERED";
+  if (
+    text.includes("not registered") ||
+    text.includes("notregistered") ||
+    text.includes("unregistered") ||
+    ["no", "n", "0", "false"].includes(text)
+  ) return "NOT_REGISTERED";
+  if (["registered", "yes", "y", "1", "true"].includes(text)) return "REGISTERED";
+  // Never invent a positive registration for an unrecognized spreadsheet value.
+  return "NOT_REGISTERED";
 }
 
 function buildStudentLookup(row) {
@@ -701,10 +800,9 @@ async function upsertDriveStudentFromAttendanceRow({ drive, row, userId }) {
   const student = await Student.findOne(lookup);
   if (!student) return { error: "Student not found in master records" };
 
-  const registrationValue = pickColumn(row, ["registrationstatus", "registration", "registered", "register", "remark", "remarks"]);
+  const registrationValue = pickColumn(row, ["registrationstatus", "registration", "registered", "register"]);
   const processStatuses = getProcessStatuses(row);
-  const anyPresent = processStatuses.some((item) => item.status === "PRESENT");
-  const registrationStatus = normalizeRegistrationStatus(registrationValue, anyPresent ? "PRESENT" : "ABSENT");
+  const registrationStatus = normalizeRegistrationStatus(registrationValue);
   const driveStudent = await DriveStudent.findOneAndUpdate(
     { drive: drive._id, student: student._id },
     {
@@ -1179,10 +1277,9 @@ async function processAutoDriveRows(rows, userId, fileName, fileType, headers, d
         continue;
       }
 
-      const registrationValue = pickColumn(rows[index], ["registrationstatus", "registration", "registered", "register", "remark", "remarks"]);
+      const registrationValue = pickColumn(rows[index], ["registrationstatus", "registration", "registered", "register"]);
       const processStatuses = getProcessStatuses(rows[index]);
-      const anyPresent = processStatuses.some((item) => item.status === "PRESENT");
-      const registrationStatus = normalizeRegistrationStatus(registrationValue, anyPresent ? "PRESENT" : "ABSENT");
+      const registrationStatus = normalizeRegistrationStatus(registrationValue);
 
       const roundHistory = processStatuses.map((item) => ({ ...item, notes: "Uploaded from attendance file", markedBy: userId }));
       const attendance = calculateDriveAttendance(registrationStatus, roundHistory);
@@ -1300,10 +1397,9 @@ async function processExistingDriveRows({ drive, rows, userId, markMissingAbsent
         continue;
       }
 
-      const registrationValue = pickColumn(processedRows[index], ["registrationstatus", "registration", "registered", "register", "remark", "remarks"]);
+      const registrationValue = pickColumn(processedRows[index], ["registrationstatus", "registration", "registered", "register"]);
       const processStatuses = getProcessStatuses(processedRows[index]);
-      const anyPresent = processStatuses.some((item) => item.status === "PRESENT");
-      const registrationStatus = normalizeRegistrationStatus(registrationValue, anyPresent ? "PRESENT" : "ABSENT");
+      const registrationStatus = normalizeRegistrationStatus(registrationValue);
 
       const roundHistory = processStatuses.map((item) => ({ ...item, notes: "Uploaded from edited attendance rows", markedBy: userId }));
       const attendance = calculateDriveAttendance(registrationStatus, roundHistory);
@@ -1538,7 +1634,9 @@ router.post("/attendance-preview", requireRole("LIST_MAKER", "HOD"), upload.sing
     summary.companyCount = companyNames.size;
     summary.companies = Array.from(companyNames).slice(0, 30);
     summary.normalization = normalization;
-    summary.notice = normalization?.normalized
+    summary.notice = normalization?.mode === "FLAT_TABLE"
+      ? `Read 1 standard table with ${normalization.cleanRows} student data row(s) from ${normalization.originalRows} spreadsheet row(s).`
+      : normalization?.normalized
       ? `Converted ${normalization.blockCount} detected block(s) into ${normalization.cleanRows} clean aligned row(s).`
       : "Preview uses the sheet's original header row because no split blocks were detected.";
     if (rows.length > 1000) {
@@ -2485,4 +2583,5 @@ router.post("/access-requests/:id/decision", requireAuth, requireRole("HOD"), as
   }
 });
 
+export { normalizeAttendanceRowsFromMatrix };
 export default router;

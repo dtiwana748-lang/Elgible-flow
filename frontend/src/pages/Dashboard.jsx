@@ -2498,7 +2498,9 @@ function AttendancePreviewEditor({ submitPath, submitLabel, onComplete, compact 
       });
       const companyText = result.companyCount ? ` across ${result.companyCount} companies` : "";
       const truncationText = result.truncated ? " Preview is limited, but upload will process the full file." : "";
-      const normalizedText = result.normalization?.normalized ? ` Cleaned ${result.normalization.blockCount} block(s) into an aligned sheet.` : "";
+      const normalizedText = result.normalization?.mode === "FLAT_TABLE"
+        ? ` Read ${result.normalization.cleanRows} data row(s) from one standard table.`
+        : result.normalization?.normalized ? ` Cleaned ${result.normalization.blockCount} block(s) into an aligned sheet.` : "";
       setMessage(`Preview ready: ${result.totalRowCount || result.rows?.length || 0} rows${companyText}.${normalizedText}${truncationText}`);
     } catch (err) {
       setMessage(err.message);
@@ -2590,9 +2592,10 @@ function AttendancePreviewEditor({ submitPath, submitLabel, onComplete, compact 
         <div className="sheet-preview-card">
           {preview.normalization?.normalized && (
             <div className="normalization-summary">
-              <strong>Auto-aligned messy sheet</strong>
-              <span>{preview.normalization.blockCount} block(s) detected</span>
-              <span>{preview.normalization.cleanRows} clean row(s)</span>
+              <strong>{preview.normalization.mode === "FLAT_TABLE" ? "Standard table detected" : "Auto-aligned messy sheet"}</strong>
+              <span>{preview.normalization.mode === "FLAT_TABLE" ? "1 table detected" : `${preview.normalization.blockCount} block(s) detected`}</span>
+              <span>{preview.normalization.cleanRows} data row(s)</span>
+              {preview.normalization.mode === "FLAT_TABLE" && <span>{preview.normalization.originalRows} spreadsheet row(s), including headings</span>}
               {!!preview.normalization.preparedByNames?.length && <span>Prepared by {preview.normalization.preparedByNames.join(", ")}</span>}
             </div>
           )}
@@ -2766,6 +2769,52 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
 
   const currentRows = requireApproval ? rows : initialRows;
   const visibleRows = currentRows.slice(0, visibleLimit);
+  const attendanceSummary = useMemo(() => {
+    const normalizeKey = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const registrationHeader = headers.find((header) => ["registration", "registrationstatus", "registered", "register"].includes(normalizeKey(header)));
+    const metaKeys = [
+      "sr", "srno", "sno", "slno", "serial", "serialno", "index", "no",
+      "gender", "sex", "branch", "branches", "department", "course", "program", "batch",
+      "company", "companyname", "eligible", "eligibility", "elgible", "registered",
+      "registration", "registrationstatus", "register", "remark", "remarks", "note", "notes",
+      "campus", "campusname"
+    ];
+    const processHeaders = headers.filter((header) => {
+      const key = normalizeKey(header);
+      if (!key || /^column\d+$/.test(key) || metaKeys.includes(key)) return false;
+      if (["roll", "enrollment", "registration", "regno", "email", "mail", "name", "student"].some((part) => key.includes(part))) return false;
+      return true;
+    });
+    const processStatus = (value) => {
+      const text = String(value || "").trim().toLowerCase();
+      if (!text) return null;
+      if (["present", "p", "yes", "y", "1", "qualified", "selected"].includes(text)) return "PRESENT";
+      if (["absent", "a", "no", "n", "0", "not present", "notpresent", "defaulter", "default"].includes(text)) return "ABSENT";
+      if (text.includes("not present") || text.includes("absent") || text.includes("not qualified") || text.includes("defaulter")) return "ABSENT";
+      if (text.includes("present") || text.includes("qualified") || text.includes("selected")) return "PRESENT";
+      return null;
+    };
+    const isRegistered = (value) => {
+      const text = String(value || "").trim().toLowerCase();
+      if (!text || text.includes("not registered") || text.includes("notregistered") || text.includes("unregistered") || ["no", "n", "0", "false"].includes(text)) return false;
+      return ["registered", "yes", "y", "1", "true"].includes(text);
+    };
+    const result = { total: currentRows.length, registered: 0, notRegistered: 0, present: 0, absent: 0, pending: 0, processCount: processHeaders.length };
+    currentRows.forEach((row) => {
+      const registered = registrationHeader ? isRegistered(row[registrationHeader]) : false;
+      if (!registered) {
+        result.notRegistered += 1;
+        result.absent += 1;
+        return;
+      }
+      result.registered += 1;
+      const statuses = processHeaders.map((header) => processStatus(row[header])).filter(Boolean);
+      if (statuses.includes("PRESENT")) result.present += 1;
+      else if (statuses.includes("ABSENT")) result.absent += 1;
+      else result.pending += 1;
+    });
+    return result;
+  }, [currentRows, headers]);
 
   return createPortal(
     <div className="sheet-preview-modal-overlay">
@@ -2807,32 +2856,58 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
         )}
 
         <div className="sheet-preview-modal-body">
+          <section className="sheet-attendance-summary">
+            <div className="sheet-attendance-summary-heading">
+              <div>
+                <span className="eyebrow">Calculated from uploaded rows</span>
+                <h4>Registration & Overall Attendance</h4>
+              </div>
+              <p>Not registered = absent. Registered + present/qualified in any process = overall present. Registered + all marked processes absent/not qualified = overall absent.</p>
+            </div>
+            <div className="sheet-attendance-metrics">
+              <div><span>Total Students</span><strong>{attendanceSummary.total}</strong></div>
+              <div className="registered"><span>Registered</span><strong>{attendanceSummary.registered}</strong></div>
+              <div className="not-registered"><span>Not Registered</span><strong>{attendanceSummary.notRegistered}</strong></div>
+              <div className="present"><span>Overall Present</span><strong>{attendanceSummary.present}</strong></div>
+              <div className="absent"><span>Overall Absent</span><strong>{attendanceSummary.absent}</strong></div>
+              <div className="pending"><span>Pending Process</span><strong>{attendanceSummary.pending}</strong></div>
+            </div>
+          </section>
           {sheetId && (
             <div className="sheet-download-panel">
-              <div>
+              <div className="sheet-download-heading">
                 <strong>Download Sheet</strong>
                 <p className="subtle">Choose format and columns for the downloaded file.</p>
               </div>
-              <select value={downloadFormat} onChange={(event) => setDownloadFormat(event.target.value)}>
-                <option value="csv">CSV</option>
-                <option value="xlsx">Excel</option>
-                <option value="json">JSON</option>
-              </select>
-              <div className="sheet-column-picker">
-                <button className="soft" type="button" onClick={() => setSelectedHeaders(headers)}>All Columns</button>
-                <button className="soft" type="button" onClick={() => setSelectedHeaders([])}>Clear</button>
-                {headers.map((header) => (
-                  <label key={header}>
-                    <input
-                      type="checkbox"
-                      checked={selectedHeaders.includes(header)}
-                      onChange={(event) => {
-                        setSelectedHeaders((current) => event.target.checked ? [...current, header] : current.filter((item) => item !== header));
-                      }}
-                    />
-                    {header}
-                  </label>
-                ))}
+              <label className="sheet-format-select">File Format
+                <select value={downloadFormat} onChange={(event) => setDownloadFormat(event.target.value)}>
+                  <option value="csv">CSV</option>
+                  <option value="xlsx">Excel</option>
+                  <option value="json">JSON</option>
+                </select>
+              </label>
+              <div className="sheet-column-section">
+                <div className="sheet-column-controls">
+                  <span>Columns <strong>{selectedHeaders.length}/{headers.length}</strong></span>
+                  <div>
+                    <button className="soft" type="button" onClick={() => setSelectedHeaders(headers)}>Select All</button>
+                    <button className="soft" type="button" onClick={() => setSelectedHeaders([])}>Clear</button>
+                  </div>
+                </div>
+                <div className="sheet-column-picker">
+                  {headers.map((header) => (
+                    <label key={header}>
+                      <input
+                        type="checkbox"
+                        checked={selectedHeaders.includes(header)}
+                        onChange={(event) => {
+                          setSelectedHeaders((current) => event.target.checked ? [...current, header] : current.filter((item) => item !== header));
+                        }}
+                      />
+                      {header}
+                    </label>
+                  ))}
+                </div>
               </div>
               <button type="button" onClick={downloadSheet} disabled={!selectedHeaders.length}><FileDown size={17} /> Download</button>
             </div>
