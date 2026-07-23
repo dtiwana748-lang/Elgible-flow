@@ -11,6 +11,54 @@ import { writeAudit } from "../utils/audit.js";
 
 const router = Router();
 const masterStudentFilter = { "source.connection": { $exists: true, $ne: null } };
+const ELIGIBILITY_EXPORT_FIELDS = {
+  srNo: { label: "Sr No", virtual: true, width: 8 },
+  rollNo: { label: "Roll No", width: 18 },
+  enrollmentNo: { label: "Enrollment No", width: 18 },
+  registrationNo: { label: "Registration No", width: 20 },
+  grNo: { label: "GR No", width: 16 },
+  universityId: { label: "University ID", width: 18 },
+  studentId: { label: "Student ID", width: 18 },
+  name: { label: "Student Name", width: 28 },
+  email: { label: "Email", width: 34 },
+  phone: { label: "Phone Number", width: 18 },
+  fatherContactNo: { label: "Father Contact No", width: 20 },
+  department: { label: "Department", width: 20 },
+  course: { label: "Course", width: 16 },
+  program: { label: "Program", width: 18 },
+  branch: { label: "Branch", width: 18 },
+  specialization: { label: "Specialization", width: 22 },
+  batch: { label: "Batch", width: 12 },
+  admissionYear: { label: "Admission Year", width: 16 },
+  passingYear: { label: "Passing Year", width: 16 },
+  semester: { label: "Semester", width: 12 },
+  section: { label: "Section", width: 12 },
+  cgpa: { label: "CGPA", width: 10 },
+  percentage: { label: "Percentage", width: 14 },
+  tenthPercentage: { label: "10th Percentage", width: 18 },
+  tenthPassingYear: { label: "10th Passing Year", width: 18 },
+  twelfthPercentage: { label: "12th Percentage", width: 18 },
+  twelfthPassingYear: { label: "12th Passing Year", width: 18 },
+  graduationPercentage: { label: "Graduation Percentage", width: 22 },
+  diplomaPercentage: { label: "Diploma Percentage", width: 20 },
+  pgStreams: { label: "PG Stream", width: 18 },
+  attendance: { label: "Attendance", width: 14 },
+  backlogs: { label: "Backlogs", width: 12 },
+  activeBacklogs: { label: "Active Backlogs", width: 16 },
+  totalBacklogs: { label: "Total Backlogs", width: 16 },
+  category: { label: "Category", width: 14 },
+  gender: { label: "Gender", width: 12 },
+  dob: { label: "Date of Birth", width: 16 },
+  domicileCity: { label: "Domicile City", width: 18 },
+  domicileState: { label: "Domicile State", width: 18 },
+  address: { label: "Address", width: 34 },
+  college: { label: "College", width: 28 },
+  placementStatus: { label: "Placement Status", width: 18 },
+  status: { label: "Student Status", width: 16 },
+  eligibilityStatus: { label: "Eligibility Status", virtual: true, width: 18 },
+  eligibilityReasons: { label: "Eligibility Details / Reasons", virtual: true, width: 42 }
+};
+const DEFAULT_EXPORT_FIELDS = ["srNo", "rollNo", "enrollmentNo", "name", "email", "department", "course", "batch", "cgpa"];
 
 function formatCgpa(value) {
   if (value === undefined || value === null || value === "") return "";
@@ -261,46 +309,74 @@ router.post("/", requireAuth, async (req, res) => {
   res.status(201).json(eligibilityList);
 });
 
-// Export eligibility list to Excel
+// Export an eligibility list using list-maker selected Master Data columns.
 router.get("/:id/export", requireAuth, async (req, res) => {
   const listFilter = req.user.role === "HOD" ? { _id: req.params.id } : { _id: req.params.id, createdBy: req.user._id };
-  const list = await EligibilityList.findOne(listFilter)
-    .populate({ path: "eligibleStudents", match: masterStudentFilter, select: "rollNo enrollmentNo registrationNo universityId name email department course batch cgpa" });
+  const list = await EligibilityList.findOne(listFilter).lean();
   
   if (!list) return res.status(404).json({ message: "List not found" });
-  
-  const eligibleStudents = list.eligibleStudents || [];
-  const rows = eligibleStudents.map((student, index) => ({
-    "Sr No": index + 1,
-    "Roll No": student.rollNo || "",
-    "Enrollment No": student.enrollmentNo || student.registrationNo || student.universityId || "",
-    "Name": student.name || "",
-    "Email": student.email || "",
-    "Department": student.department || "",
-    "Course": student.course || "",
-    "Batch": student.batch || "",
-    "CGPA": formatCgpa(student.cgpa)
-  }));
+
+  const scope = ["eligible", "notEligible", "all"].includes(req.query.scope) ? req.query.scope : "eligible";
+  const format = req.query.format === "csv" ? "csv" : "xlsx";
+  const requestedFields = String(req.query.fields || "")
+    .split(",")
+    .map((field) => field.trim())
+    .filter((field) => ELIGIBILITY_EXPORT_FIELDS[field]);
+  const fields = [...new Set(requestedFields.length ? requestedFields : DEFAULT_EXPORT_FIELDS)];
+  if (!fields.length) return res.status(400).json({ message: "Select at least one valid field to export" });
+
+  const eligibleIds = (list.eligibleStudents || []).map(String);
+  const notEligibleIds = (list.notEligibleStudents || []).map(String);
+  const selectedIds = scope === "eligible" ? eligibleIds : scope === "notEligible" ? notEligibleIds : [...eligibleIds, ...notEligibleIds];
+  // Load complete master records so eligibility reasons remain accurate even when
+  // the teacher does not include academic fields in the output.
+  let students = await Student.find({ ...masterStudentFilter, _id: { $in: selectedIds } }).lean();
+  const order = new Map(selectedIds.map((id, index) => [id, index]));
+  students.sort((a, b) => (order.get(String(a._id)) ?? 0) - (order.get(String(b._id)) ?? 0));
+
+  const search = String(req.query.search || "").trim().toLowerCase();
+  if (search) {
+    students = students.filter((student) => [
+      student.name, student.rollNo, student.enrollmentNo, student.registrationNo,
+      student.universityId, student.email, student.department, student.course,
+    ].some((value) => String(value || "").toLowerCase().includes(search)));
+  }
+
+  const eligibleIdSet = new Set(eligibleIds);
+  const percentageFields = new Set(["cgpa", "percentage", "tenthPercentage", "twelfthPercentage", "graduationPercentage", "diplomaPercentage", "attendance"]);
+  const rows = students.map((student, index) => {
+    const isEligible = eligibleIdSet.has(String(student._id));
+    const eligibility = calculateEligibility(student, list.criteria || {});
+    const row = {};
+    fields.forEach((field) => {
+      const config = ELIGIBILITY_EXPORT_FIELDS[field];
+      let value = student[field];
+      if (field === "srNo") value = index + 1;
+      if (field === "eligibilityStatus") value = isEligible ? "Eligible" : "Not Eligible";
+      if (field === "eligibilityReasons") value = isEligible ? "Meets all criteria" : (eligibility.reasons || []).join("; ");
+      if (field === "dob" && value) {
+        const date = new Date(value);
+        value = Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : "";
+      }
+      if (percentageFields.has(field)) value = formatCgpa(value);
+      row[config.label] = value ?? "";
+    });
+    return row;
+  });
   
   const workbook = xlsx.utils.book_new();
-  const worksheet = xlsx.utils.json_to_sheet(rows);
-  worksheet["!cols"] = [
-    { wch: 8 },
-    { wch: 18 },
-    { wch: 18 },
-    { wch: 28 },
-    { wch: 34 },
-    { wch: 22 },
-    { wch: 16 },
-    { wch: 12 },
-    { wch: 10 }
-  ];
+  const outputHeaders = fields.map((field) => ELIGIBILITY_EXPORT_FIELDS[field].label);
+  const worksheet = xlsx.utils.json_to_sheet(rows, { header: outputHeaders });
+  worksheet["!cols"] = fields.map((field) => ({ wch: ELIGIBILITY_EXPORT_FIELDS[field].width || 18 }));
   if (worksheet["!ref"]) worksheet["!autofilter"] = { ref: worksheet["!ref"] };
-  xlsx.utils.book_append_sheet(workbook, worksheet, "Eligible Students");
-  const buffer = xlsx.write(workbook, { type: "buffer", bookType: "xlsx" });
+  xlsx.utils.book_append_sheet(workbook, worksheet, scope === "all" ? "All Students" : scope === "notEligible" ? "Not Eligible" : "Eligible Students");
+  const safeName = list.name.replace(/[^a-z0-9]/gi, "_");
   
-  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  res.setHeader("Content-Disposition", `attachment; filename="eligibility-list-${list.name.replace(/[^a-z0-9]/gi, "_")}-${Date.now()}.xlsx"`);
+  const buffer = format === "csv"
+    ? Buffer.from(`\uFEFF${xlsx.utils.sheet_to_csv(worksheet)}`, "utf8")
+    : xlsx.write(workbook, { type: "buffer", bookType: "xlsx" });
+  res.setHeader("Content-Type", format === "csv" ? "text/csv; charset=utf-8" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${safeName}-${scope}-${Date.now()}.${format}"`);
   res.send(buffer);
 });
 

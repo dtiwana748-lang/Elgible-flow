@@ -189,7 +189,21 @@ function pickColumn(row, names, excludes = []) {
 
 function cleanId(val) {
   if (val === undefined || val === null) return "";
-  return String(val).replace(/\.0$/, "").trim();
+  return String(val)
+    .replace(/^\uFEFF/, "")
+    .replace(/^['"`]+/, "")
+    .replace(/\.0$/, "")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
+function identifierKeys(value) {
+  const cleaned = cleanId(value).toLowerCase();
+  if (!cleaned) return [];
+  const keys = new Set([cleaned]);
+  // Excel/CSV exports frequently add or remove leading zeroes from numeric IDs.
+  if (/^\d+$/.test(cleaned)) keys.add(cleaned.replace(/^0+(?=\d)/, ""));
+  return [...keys];
 }
 
 function readAttendanceMatrix(file) {
@@ -228,7 +242,7 @@ function canonicalAttendanceHeader(header) {
   if (key.includes("studentemail") || key.includes("email") || key === "mail") return "Student Email ID";
   if (key === "branch" || key === "branches" || key.includes("stream")) return "Branch";
   if (key === "course" || key.includes("program")) return "Course";
-  if (key.includes("eligible")) return "Eligibility";
+  if (key.includes("eligible") || key.includes("elgible") || key.includes("eligibility")) return "Eligibility";
   if (key.includes("registered") || key === "register") return "Registration";
   if (key.includes("attendance") || key === "present" || key === "presence") return "Attendance";
   return cellText(header);
@@ -268,6 +282,20 @@ function segmentHeaderRanges(row) {
       start = null;
       known = 0;
     }
+  }
+  const nonEmptyIndexes = row
+    .map((value, index) => cellText(value) ? index : -1)
+    .filter((index) => index >= 0);
+  const knownCount = row.filter((value) => isKnownHeader(value)).length;
+  const identityHeaders = row
+    .map(canonicalAttendanceHeader)
+    .filter((header) => ["Roll No", "Student Name", "Student Email ID"].includes(header));
+  const hasRepeatedIdentityHeader = new Set(identityHeaders).size !== identityHeaders.length;
+  // Treat one visual header row as one table even when it contains spacer columns.
+  // This keeps Registered and process columns attached to Roll No/Student Name.
+  // Repeated identifier headings indicate genuinely separate side-by-side tables.
+  if (nonEmptyIndexes.length >= 2 && knownCount >= 2 && !hasRepeatedIdentityHeader) {
+    return [{ start: nonEmptyIndexes[0], end: nonEmptyIndexes.at(-1) }];
   }
   return ranges;
 }
@@ -613,10 +641,11 @@ function buildStudentLookup(row) {
 
 function isMetaAttendanceColumn(header) {
   const key = normalizeHeader(header);
+  if (/^column\d+$/.test(key)) return true;
   const exactMetas = [
     "sr", "srno", "sno", "slno", "serial", "serialno", "index", "no",
     "gender", "gen", "sex", "branch", "department", "course", "program", "batch",
-    "company", "companyname", "eligible", "registered", "register", "remark", "remarks", "note", "notes"
+    "company", "companyname", "eligible", "eligibility", "elgible", "registered", "register", "remark", "remarks", "note", "notes"
   ];
   if (exactMetas.includes(key)) return true;
 
@@ -933,14 +962,32 @@ async function buildStudentMaps() {
   const byEmail = new Map();
   const byName = new Map();
 
+  const addIdentifier = (map, value, student) => {
+    identifierKeys(value).forEach((key) => {
+      if (!map.has(key)) map.set(key, student);
+      else if (map.get(key)?._id?.toString() !== student._id.toString()) map.set(key, null);
+    });
+  };
+  const addName = (value, student) => {
+    const key = cellText(value).toLowerCase();
+    if (!key) return;
+    const matches = byName.get(key) || [];
+    matches.push(student);
+    byName.set(key, matches);
+  };
+
   for (const s of students) {
-    if (s.grNo) byGrNo.set(cleanId(s.grNo).toLowerCase(), s);
-    if (s.universityId) byUniversityId.set(cleanId(s.universityId).toLowerCase(), s);
-    if (s.enrollmentNo) byEnrollment.set(cleanId(s.enrollmentNo).toLowerCase(), s);
-    if (s.registrationNo) byRegNo.set(cleanId(s.registrationNo).toLowerCase(), s);
-    if (s.rollNo) byRollNo.set(cleanId(s.rollNo).toLowerCase(), s);
-    if (s.email) byEmail.set(String(s.email).trim().toLowerCase(), s);
-    if (s.name) byName.set(cleanId(s.name).toLowerCase(), s);
+    addIdentifier(byGrNo, s.grNo, s);
+    addIdentifier(byUniversityId, s.universityId, s);
+    addIdentifier(byEnrollment, s.enrollmentNo, s);
+    addIdentifier(byRegNo, s.registrationNo, s);
+    addIdentifier(byRollNo, s.rollNo, s);
+    if (s.email) {
+      const emailKey = String(s.email).trim().toLowerCase();
+      if (!byEmail.has(emailKey)) byEmail.set(emailKey, s);
+      else if (byEmail.get(emailKey)?._id?.toString() !== s._id.toString()) byEmail.set(emailKey, null);
+    }
+    addName(s.name, s);
   }
   return { byGrNo, byUniversityId, byEnrollment, byRegNo, byRollNo, byEmail, byName };
 }
@@ -954,26 +1001,24 @@ function findStudentInMap(row, studentMaps) {
   const email = pickColumn(row, ["studentemail", "emailid", "email", "mail"], ["company"]);
   const name = pickColumn(row, ["studentname", "candidatename", "fullname", "name"], ["company", "organisation", "organization", "father", "mother", "parent"]);
 
-  if (grNo && studentMaps.byGrNo.has(cleanId(grNo).toLowerCase())) {
-    return studentMaps.byGrNo.get(cleanId(grNo).toLowerCase());
-  }
-  if (universityId && studentMaps.byUniversityId.has(cleanId(universityId).toLowerCase())) {
-    return studentMaps.byUniversityId.get(cleanId(universityId).toLowerCase());
-  }
-  if (enrollmentNo && studentMaps.byEnrollment.has(cleanId(enrollmentNo).toLowerCase())) {
-    return studentMaps.byEnrollment.get(cleanId(enrollmentNo).toLowerCase());
-  }
-  if (registrationNo && studentMaps.byRegNo.has(cleanId(registrationNo).toLowerCase())) {
-    return studentMaps.byRegNo.get(cleanId(registrationNo).toLowerCase());
-  }
-  if (rollNo && studentMaps.byRollNo.has(cleanId(rollNo).toLowerCase())) {
-    return studentMaps.byRollNo.get(cleanId(rollNo).toLowerCase());
-  }
+  const fromIdentifiers = (map, value) => identifierKeys(value).map((key) => map.get(key)).find(Boolean);
+  const grMatch = fromIdentifiers(studentMaps.byGrNo, grNo);
+  if (grMatch) return grMatch;
+  const universityMatch = fromIdentifiers(studentMaps.byUniversityId, universityId);
+  if (universityMatch) return universityMatch;
+  const enrollmentMatch = fromIdentifiers(studentMaps.byEnrollment, enrollmentNo);
+  if (enrollmentMatch) return enrollmentMatch;
+  const registrationMatch = fromIdentifiers(studentMaps.byRegNo, registrationNo);
+  if (registrationMatch) return registrationMatch;
+  const rollMatch = fromIdentifiers(studentMaps.byRollNo, rollNo);
+  if (rollMatch) return rollMatch;
   if (email && studentMaps.byEmail.has(String(email).trim().toLowerCase())) {
     return studentMaps.byEmail.get(String(email).trim().toLowerCase());
   }
-  if (name && studentMaps.byName.has(cleanId(name).toLowerCase())) {
-    return studentMaps.byName.get(cleanId(name).toLowerCase());
+  if (name) {
+    const nameMatches = studentMaps.byName.get(cellText(name).toLowerCase()) || [];
+    // Never silently assign a row to the wrong student when names are duplicated.
+    if (nameMatches.length === 1) return nameMatches[0];
   }
   return null;
 }
@@ -983,7 +1028,8 @@ async function findMasterStudentFromRow(row, studentMaps) {
   if (!student) {
     const lookup = buildStudentLookup(row);
     if (lookup) {
-      student = await Student.findOne(lookup).lean();
+      const matchingStudents = await Student.find(lookup).limit(2).lean();
+      student = matchingStudents.length === 1 ? matchingStudents[0] : null;
     }
   }
 

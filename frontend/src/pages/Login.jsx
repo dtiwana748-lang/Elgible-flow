@@ -44,7 +44,7 @@ export default function Login({ authMessage = "" }) {
           </div>
         </div>
         <div className="login-heading">
-          <span>HOD and List Maker access</span>
+          <span>HOD and Placement Officer access</span>
           <h2>Sign in to continue</h2>
         </div>
         <form onSubmit={submit} className="login-form">

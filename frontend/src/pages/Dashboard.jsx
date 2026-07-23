@@ -4,7 +4,7 @@ import {
   BarChart3, Bell, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
   FileDown, Gauge, GraduationCap, Home, Info, LayoutDashboard, ListChecks, LogOut, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users, UsersRound, X
 } from "lucide-react";
-import { api, API_URL } from "../api.js";
+import { api, downloadApiFile } from "../api.js";
 import { assetUrl } from "../api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 
@@ -44,6 +44,51 @@ const fieldLabels = {
   program: "Program",
   semester: "Semester"
 };
+
+const eligibilityExportFieldGroups = [
+  {
+    label: "Student identity",
+    fields: [
+      ["srNo", "Sr No"], ["rollNo", "Roll No"], ["enrollmentNo", "Enrollment No"],
+      ["registrationNo", "Registration No"], ["grNo", "GR No"], ["universityId", "University ID"],
+      ["studentId", "Student ID"], ["name", "Student Name"]
+    ]
+  },
+  {
+    label: "Contact details",
+    fields: [
+      ["email", "Email"], ["phone", "Phone Number"], ["fatherContactNo", "Father Contact No"],
+      ["address", "Address"], ["domicileCity", "Domicile City"], ["domicileState", "Domicile State"]
+    ]
+  },
+  {
+    label: "Course and batch",
+    fields: [
+      ["department", "Department"], ["course", "Course"], ["program", "Program"], ["branch", "Branch"],
+      ["specialization", "Specialization"], ["batch", "Batch"], ["admissionYear", "Admission Year"],
+      ["passingYear", "Passing Year"], ["semester", "Semester"], ["section", "Section"], ["college", "College"]
+    ]
+  },
+  {
+    label: "Academic details",
+    fields: [
+      ["cgpa", "CGPA"], ["percentage", "Percentage"], ["tenthPercentage", "10th Percentage"],
+      ["tenthPassingYear", "10th Passing Year"], ["twelfthPercentage", "12th Percentage"],
+      ["twelfthPassingYear", "12th Passing Year"], ["graduationPercentage", "Graduation Percentage"],
+      ["diplomaPercentage", "Diploma Percentage"], ["pgStreams", "PG Stream"], ["attendance", "Attendance"],
+      ["backlogs", "Backlogs"], ["activeBacklogs", "Active Backlogs"], ["totalBacklogs", "Total Backlogs"]
+    ]
+  },
+  {
+    label: "Personal and status",
+    fields: [
+      ["category", "Category"], ["gender", "Gender"], ["dob", "Date of Birth"],
+      ["placementStatus", "Placement Status"], ["status", "Student Status"],
+      ["eligibilityStatus", "Eligibility Status"], ["eligibilityReasons", "Eligibility Details / Reasons"]
+    ]
+  }
+];
+const defaultEligibilityExportFields = ["srNo", "rollNo", "enrollmentNo", "name", "email", "department", "course", "batch", "cgpa"];
 
 function labelFor(field) {
   return fieldLabels[field] || field.replace(/([A-Z])/g, " $1").replace(/^./, (letter) => letter.toUpperCase());
@@ -109,7 +154,7 @@ function RoleSidebar({ nav, active, setActive, user, logout }) {
           <img src="/logo.png" alt="Eligibility Flow logo" />
           <div>
             <h1>Eligibility Flow</h1>
-            <p>{user.role === "HOD" ? "Administration" : "List Maker"}</p>
+            <p>{user.role === "HOD" ? "Administration" : "Placement Officer"}</p>
           </div>
         </div>
         <nav>
@@ -142,21 +187,20 @@ function RoleSidebar({ nav, active, setActive, user, logout }) {
             </button>
           );
         })}
-        <button className="mobile-nav-item" onClick={logout} title="Sign Out">
-          <LogOut size={22} />
-          <span>Logout</span>
-        </button>
       </nav>
     </>
   );
 }
 
 function PageHeader({ eyebrow, title, subtitle, children }) {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const avatarSrc = assetUrl(user?.profileImage);
   const initials = (user?.name || user?.email || "U").slice(0, 1).toUpperCase();
   return (
     <header className="topbar">
+      <button className="mobile-header-logout" type="button" onClick={logout} title="Sign out" aria-label="Sign out">
+        <LogOut size={19} />
+      </button>
       <div>
         <p className="eyebrow">{eyebrow}</p>
         <h2>{title}</h2>
@@ -253,15 +297,7 @@ function DashboardHome({ user, setActive, setDriveInitialTab }) {
 
   async function downloadStudents() {
     const query = new URLSearchParams(Object.entries(studentFilters).filter(([, value]) => value !== "")).toString();
-    const token = localStorage.getItem("eligibleFlowToken");
-    const response = await fetch(`${API_URL}/records/students/export?${query}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.message || "Unable to download report");
-    }
-    const blob = await response.blob();
+    const blob = await downloadApiFile(`/records/students/export?${query}`);
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = href;
@@ -755,7 +791,7 @@ function ManagersPage() {
     });
     const wasEditing = Boolean(editingId);
     resetManagerForm();
-    setMessage(wasEditing ? "Manager account updated" : "Manager account created as LIST_MAKER");
+    setMessage(wasEditing ? "Placement Officer account updated" : "Placement Officer account created");
     load();
   }
 
@@ -769,7 +805,7 @@ function ManagersPage() {
   }
 
   async function deleteManager(manager) {
-    const confirmed = window.confirm(`Delete ${manager.name}'s List Maker account? This removes login access but keeps historical records.`);
+    const confirmed = window.confirm(`Delete ${manager.name}'s Placement Officer account? This removes login access but keeps historical records.`);
     if (!confirmed) return;
 
     await api(`/users/${manager.id}`, { method: "DELETE" });
@@ -780,7 +816,7 @@ function ManagersPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Manager Administration" title="Managers" subtitle="Create and manage List Maker accounts only">
+      <PageHeader eyebrow="Manager Administration" title="Placement Officers" subtitle="Create and manage Placement Officer accounts">
         <button><UserPlus size={17} /> Create Manager</button>
       </PageHeader>
       {message && <div className="notice">{message}</div>}
@@ -791,14 +827,14 @@ function ManagersPage() {
             <label key={field}>{labelFor(field)}<input type={field.includes("Email") || field === "email" ? "email" : "text"} value={form[field]} onChange={(e) => setForm({ ...form, [field]: e.target.value })} required={["name", "email"].includes(field)} /></label>
           ))}
           <label>{editingId ? "New Password (optional)" : "Initial Password"}<input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required={!editingId} minLength={editingId && !form.password ? undefined : 8} maxLength={128} autoComplete="new-password" /></label>
-          <button><Save size={17} /> {editingId ? "Update List Maker" : "Save List Maker"}</button>
+          <button><Save size={17} /> {editingId ? "Update Placement Officer" : "Save Placement Officer"}</button>
           {editingId && <button className="soft" type="button" onClick={resetManagerForm}><X size={17} /> Cancel</button>}
         </form>
       </section>
 
       <section className="panel" style={{ marginTop: "22px", overflow: "visible" }}>
         <h3 style={{ margin: "0 0 16px 0", display: "flex", alignItems: "center", gap: "8px" }}>
-          <UsersRound size={18} /> Registered List Makers
+          <UsersRound size={18} /> Registered Placement Officers
         </h3>
         <DataTable
           className="managers-table"
@@ -1648,6 +1684,50 @@ function DriveWisePage({ user, initialTab = "drives" }) {
             </div>
             <AttendancePreviewEditor submitPath="/drives/attendance-rows" submitLabel="Upload & Create Drives" onComplete={load} />
           </section>
+          <section className="panel upload-format-guide">
+            <div className="format-guide-heading">
+              <div>
+                <span className="eyebrow">Recommended sheet format</span>
+                <h3><Info size={18} /> CSV / Excel Upload Guide</h3>
+                <p className="subtle">Keep one student on each row. The first row must contain column headings; process columns can be added after Registered.</p>
+              </div>
+              <button
+                className="soft"
+                type="button"
+                onClick={() => {
+                  const csv = [
+                    ["Roll No", "Student_Name", "Branches", "Company name", "Eligible", "Registered", "First process", "Second process"],
+                    ["22123456", "Aman Singh", "CSE", "Example Company", "Yes", "Yes", "Present", "Qualified"]
+                  ].map((row) => row.map((cell) => `"${cell}"`).join(",")).join("\r\n");
+                  const link = document.createElement("a");
+                  link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+                  link.download = "drive-upload-template.csv";
+                  link.click();
+                  URL.revokeObjectURL(link.href);
+                }}
+              >
+                <FileDown size={17} /> Download Template
+              </button>
+            </div>
+            <div className="format-example-wrap">
+              <table className="format-example-table">
+                <thead><tr>
+                  <th>Roll No</th><th>Student_Name</th><th>Branches</th><th>Company name</th>
+                  <th>Eligible</th><th>Registered</th><th>First process</th><th>Second process</th>
+                </tr></thead>
+                <tbody><tr>
+                  <td>22123456</td><td>Aman Singh</td><td>CSE</td><td>Example Company</td>
+                  <td>Yes</td><td>Yes</td><td>Present</td><td>Qualified</td>
+                </tr></tbody>
+              </table>
+            </div>
+            <div className="format-rules">
+              <div><strong>Required for matching</strong><span>Use Roll No for every student. Email may be used as a second reliable identifier.</span></div>
+              <div><strong>Company and status</strong><span>Company name, Eligible, and Registered should be filled for every row. Use Yes/No.</span></div>
+              <div><strong>Company process fields</strong><span>Add any round after Registered—such as Aptitude Test, GD, Technical, or HR. Use Present/Absent or Qualified/Not Qualified.</span></div>
+              <div><strong>Avoid spreadsheet issues</strong><span>Do not merge cells, add title rows, or leave blank student rows. Save Roll No as Text to preserve leading zeroes.</span></div>
+            </div>
+          </section>
         </>
       )}
 
@@ -1872,14 +1952,14 @@ function DriveWisePage({ user, initialTab = "drives" }) {
       {!isMaker && activeTab === "requests" && (
         <section className="panel requests-panel" style={{ padding: "20px", display: "grid", gap: "20px" }}>
           <div>
-            <h3 style={{ margin: 0 }}>List Maker Access Requests</h3>
-            <p className="subtle">Review and manage sheet edit approvals and re-upload permissions submitted by list makers.</p>
+            <h3 style={{ margin: 0 }}>Placement Officer Access Requests</h3>
+            <p className="subtle">Review and manage sheet edit approvals and re-upload permissions submitted by Placement Officers.</p>
           </div>
 
           <div style={{ display: "grid", gap: "16px" }}>
             {requests.filter(r => r.status === "PENDING").map((req) => (
               <div key={req._id} className="request-card" style={{ border: "1px solid var(--line)", borderRadius: "8px", padding: "16px", display: "grid", gap: "12px", textAlign: "left", background: "white" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div className="request-card-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span className="badge" style={{ background: req.type === "EDIT_SHEET" ? "rgba(232, 93, 38, 0.1)" : "rgba(13, 134, 165, 0.1)", color: req.type === "EDIT_SHEET" ? "var(--orange)" : "var(--blue)", padding: "4px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold" }}>
                     {req.type === "EDIT_SHEET" ? "SHEET EDIT APPROVAL" : "RE-UPLOAD ACCESS"}
                   </span>
@@ -1893,7 +1973,7 @@ function DriveWisePage({ user, initialTab = "drives" }) {
 
                 {/* Show proposed edits diff table if type is EDIT_SHEET */}
                 {req.type === "EDIT_SHEET" && req.proposedChanges && req.proposedChanges.length > 0 && (
-                  <div style={{ background: "var(--light-bg)", borderRadius: "6px", padding: "12px", border: "1px solid var(--line)" }}>
+                  <div className="request-changes" style={{ background: "var(--light-bg)", borderRadius: "6px", padding: "12px", border: "1px solid var(--line)" }}>
                     <h5 style={{ margin: "0 0 8px 0" }}>Proposed Cell Modifications:</h5>
                     <table style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse" }}>
                       <thead>
@@ -1928,7 +2008,7 @@ function DriveWisePage({ user, initialTab = "drives" }) {
                     rows={2}
                     style={{ width: "100%", fontSize: "13px", padding: "8px" }}
                   />
-                  <div style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+                  <div className="request-decision-actions" style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
                     <button className="soft" onClick={() => handleDecision(req._id, "REJECTED")} style={{ color: "var(--red)" }}>Reject Request</button>
                     <button onClick={() => handleDecision(req._id, "APPROVED")}>Approve Request</button>
                   </div>
@@ -2182,7 +2262,7 @@ function DriveCard({ drive, user, refresh, requests = [], onDelete, selected = f
     try {
       await api("/drives/access-requests", {
         method: "POST",
-        body: JSON.stringify({ driveId: drive._id, type: "REUPLOAD_SHEET", reason: "List Maker requested permission to re-upload the attendance sheet." })
+        body: JSON.stringify({ driveId: drive._id, type: "REUPLOAD_SHEET", reason: "Placement Officer requested permission to re-upload the attendance sheet." })
       });
       setCardMessage("Re-upload request sent to HOD.");
       refresh();
@@ -2444,7 +2524,7 @@ function AttendancePreviewEditor({ submitPath, submitLabel, onComplete, compact 
     setMessage("");
     try {
       let result;
-      if (submitPath === "/drives/attendance-rows" && file) {
+      if (submitPath === "/drives/attendance-rows" && file && preview.truncated) {
         const body = new FormData();
         body.append("file", file);
         if (companyName.trim()) body.append("companyName", companyName.trim());
@@ -2662,19 +2742,17 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
 
   async function downloadSheet() {
     if (!sheetId) return;
-    const token = localStorage.getItem("eligibleFlowToken") || localStorage.getItem("token");
     const params = new URLSearchParams({
       format: downloadFormat,
       columns: selectedHeaders.join(",")
     });
-    const response = await fetch(`${API_URL}/drives/sheets/${sheetId}/download?${params}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    });
-    if (!response.ok) {
-      setMessage("Unable to download this sheet");
+    let blob;
+    try {
+      blob = await downloadApiFile(`/drives/sheets/${sheetId}/download?${params}`);
+    } catch (error) {
+      setMessage(error.message);
       return;
     }
-    const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -2831,7 +2909,7 @@ function ProfilePage({ user }) {
           <div className="profile-summary">
             <div>
               <h3>{form.name || "User Profile"}</h3>
-              <span>{user.role === "HOD" ? "Administration Profile" : "List Maker Profile"}</span>
+              <span>{user.role === "HOD" ? "Administration Profile" : "Placement Officer Profile"}</span>
             </div>
             <p>{form.email}</p>
           </div>
@@ -3192,6 +3270,11 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
   const [message, setMessage] = useState("");
   const [activeSubTab, setActiveSubTab] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [showExportBuilder, setShowExportBuilder] = useState(false);
+  const [exportFormat, setExportFormat] = useState("xlsx");
+  const [exportScope, setExportScope] = useState("eligible");
+  const [selectedExportFields, setSelectedExportFields] = useState(defaultEligibilityExportFields);
+  const [exporting, setExporting] = useState(false);
 
   async function loadList() {
     setLoading(true);
@@ -3219,20 +3302,45 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
   }
 
   async function exportList() {
-    const token = localStorage.getItem("eligibleFlowToken");
-    const response = await fetch(`${API_URL}/eligibility/${initialList._id}/export`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    });
-    if (!response.ok) throw new Error("Export failed");
-    const blob = await response.blob();
-    const href = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = href;
-    link.download = `${list.name.replace(/[^a-z0-9]/gi, "_")}.xlsx`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(href);
+    if (!selectedExportFields.length) {
+      setMessage("Select at least one field to download.");
+      return;
+    }
+    setExporting(true);
+    setMessage("");
+    try {
+      const params = new URLSearchParams({
+        fields: selectedExportFields.join(","),
+        scope: exportScope,
+        format: exportFormat
+      });
+      if (searchTerm.trim()) params.set("search", searchTerm.trim());
+      const blob = await downloadApiFile(`/eligibility/${initialList._id}/export?${params}`);
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = `${list.name.replace(/[^a-z0-9]/gi, "_")}-${exportScope}.${exportFormat}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+      setMessage(`Download successful: ${exportScope === "all" ? "all checked" : exportScope === "notEligible" ? "not eligible" : "eligible"} students with ${selectedExportFields.length} selected fields.`);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  function toggleExportField(field) {
+    setSelectedExportFields((current) => (
+      current.includes(field) ? current.filter((item) => item !== field) : [...current, field]
+    ));
+  }
+
+  function openExportBuilder() {
+    setExportScope(activeSubTab === "not-eligible" ? "notEligible" : activeSubTab === "all" ? "all" : "eligible");
+    setShowExportBuilder(true);
   }
 
   useEffect(() => { loadList(); }, [initialList._id]);
@@ -3371,10 +3479,64 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
     <>
       <PageHeader eyebrow="Eligibility" title={list.name} subtitle={list.description || "No description"}>
         <button className="soft" onClick={back}><ChevronLeft size={17} /> Back to Lists</button>
-        <button className="soft" onClick={exportList}><FileDown size={17} /> Export Excel</button>
+        <button className="soft" onClick={openExportBuilder}><FileDown size={17} /> Custom Download</button>
         {!isHod && list.status === "DRAFT" && <button onClick={finalizeList} disabled={loading}><Save size={17} /> Finalize List</button>}
       </PageHeader>
       {message && <div className={message.toLowerCase().includes("success") ? "notice" : "notice error"}>{message}</div>}
+
+      {showExportBuilder && (
+        <section className="panel eligibility-export-builder">
+          <div className="eligibility-export-heading">
+            <div>
+              <span className="eyebrow">Customizable student file</span>
+              <h3><FileDown size={19} /> Choose Fields to Download</h3>
+              <p className="subtle">Select any fields available in Master Data. The current search text is also applied to the downloaded file.</p>
+            </div>
+            <button className="icon-button soft" type="button" onClick={() => setShowExportBuilder(false)} aria-label="Close custom download"><X size={18} /></button>
+          </div>
+          <div className="eligibility-export-controls">
+            <label>Students
+              <select value={exportScope} onChange={(event) => setExportScope(event.target.value)}>
+                <option value="eligible">Eligible students</option>
+                <option value="notEligible">Not eligible students</option>
+                <option value="all">All checked students</option>
+              </select>
+            </label>
+            <label>File format
+              <select value={exportFormat} onChange={(event) => setExportFormat(event.target.value)}>
+                <option value="xlsx">Excel (.xlsx)</option>
+                <option value="csv">CSV (.csv)</option>
+              </select>
+            </label>
+            <div className="export-selection-actions">
+              <button className="soft" type="button" onClick={() => setSelectedExportFields(eligibilityExportFieldGroups.flatMap((group) => group.fields.map(([field]) => field)))}>Select All</button>
+              <button className="soft" type="button" onClick={() => setSelectedExportFields(defaultEligibilityExportFields)}>Recommended</button>
+              <button className="soft" type="button" onClick={() => setSelectedExportFields([])}>Clear</button>
+            </div>
+          </div>
+          <div className="eligibility-field-groups">
+            {eligibilityExportFieldGroups.map((group) => (
+              <fieldset key={group.label}>
+                <legend>{group.label}</legend>
+                <div>
+                  {group.fields.map(([field, label]) => (
+                    <label key={field} className="export-field-option">
+                      <input type="checkbox" checked={selectedExportFields.includes(field)} onChange={() => toggleExportField(field)} />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            ))}
+          </div>
+          <div className="eligibility-export-footer">
+            <span><strong>{selectedExportFields.length}</strong> fields selected{searchTerm.trim() ? ` · Search filter: “${searchTerm.trim()}”` : ""}</span>
+            <button type="button" onClick={exportList} disabled={!selectedExportFields.length || exporting}>
+              <FileDown size={17} /> {exporting ? "Preparing..." : `Download ${exportFormat.toUpperCase()}`}
+            </button>
+          </div>
+        </section>
+      )}
       
       <div style={{ background: "white", padding: "14px", border: "1px solid var(--line)", borderRadius: "8px", marginTop: "14px", fontSize: "14px", textAlign: "left" }}>
         <strong>List Info:</strong> Created by <strong>{list.createdBy?.name || list.createdBy?.email || "Unknown"}</strong>.
@@ -3677,7 +3839,13 @@ function DataTable({ columns, rows, className = "" }) {
     <section className={`table-wrap ${className}`}>
       <table>
         <thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
-        <tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody>
+        <tbody>{rows.map((row, index) => (
+          <tr key={index}>
+            {row.map((cell, cellIndex) => (
+              <td key={cellIndex} data-label={columns[cellIndex] || `Field ${cellIndex + 1}`}>{cell}</td>
+            ))}
+          </tr>
+        ))}</tbody>
       </table>
     </section>
   );
