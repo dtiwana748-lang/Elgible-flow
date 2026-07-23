@@ -35,7 +35,10 @@ function escapeRegex(value) {
 }
 
 function buildFilter(query) {
-  const filter = query.includeAll === "true" ? {} : { "source.connection": { $exists: true, $ne: null } };
+  const filter = query.includeAll === "true" ? {} : {
+    "source.connection": { $exists: true, $ne: null },
+    sourceStatus: { $nin: ["MISSING_FROM_SOURCE", "ARCHIVED_FROM_SOURCE"] }
+  };
   ["batch", "department", "branch", "course", "program", "semester", "category", "placementStatus", "status", "sourceStatus", "passingYear", "admissionYear"].forEach((field) => {
     if (query[field]) filter[field] = ["semester", "passingYear", "admissionYear"].includes(field) ? Number(query[field]) : query[field];
   });

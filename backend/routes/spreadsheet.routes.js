@@ -399,7 +399,8 @@ router.get("/connection", requireRole("HOD"), asyncHandler(async (_req, res) => 
   const connectionsWithCounts = await Promise.all(connections.map(async (connection) => ({
     ...connection,
     syncedRecordCount: await Student.countDocuments({
-      "source.connection": connection._id
+      "source.connection": connection._id,
+      sourceStatus: { $nin: ["MISSING_FROM_SOURCE", "ARCHIVED_FROM_SOURCE"] }
     })
   })));
   res.json({ connections: connectionsWithCounts, logs });

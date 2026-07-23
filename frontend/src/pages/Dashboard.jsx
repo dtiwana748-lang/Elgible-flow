@@ -1335,11 +1335,20 @@ function DriveWisePage({ user, initialTab = "drives" }) {
   const [toast, setToast] = useState(null);
   const [confirmAction, setConfirmAction] = useState(null);
   const [showReportInfo, setShowReportInfo] = useState(false);
+  const [showAllCompanyCards, setShowAllCompanyCards] = useState(false);
 
   const isMaker = user.role === "LIST_MAKER";
 
   const filteredDrives = drives.filter((drive) => {
-    const text = [drive.companyName, drive.jobRole, drive.packageCtc, drive.driveType].join(" ").toLowerCase();
+    const text = [
+      drive.companyName,
+      drive.jobRole,
+      drive.packageCtc,
+      drive.driveType,
+      ...(drive.preparedByNames || []),
+      drive.createdBy?.name,
+      drive.createdBy?.email
+    ].join(" ").toLowerCase();
     return text.includes(driveSearch.trim().toLowerCase());
   });
   const filteredDriveIds = filteredDrives.map((drive) => drive._id);
@@ -1622,6 +1631,9 @@ function DriveWisePage({ user, initialTab = "drives" }) {
       reportId: row.driveId || row.companyName || row.name || row._id || "Unmapped"
     }));
   }, [activeReportRows, reportMode, reportsList, selectedCompanyFilter]);
+  const visibleReportCards = reportMode === "company" && selectedCompanyFilter === "ALL" && !showAllCompanyCards
+    ? displayReports.slice(0, 6)
+    : displayReports;
 
   // Calculate HOD reports aggregates
   const reportsTotal = useMemo(() => {
@@ -1753,13 +1765,13 @@ function DriveWisePage({ user, initialTab = "drives" }) {
             )}
             <button className="soft" onClick={load}><RefreshCcw size={17} /> Refresh Drives</button>
           </section>
-          <section className="drive-grid">
+          <section className="drive-grid drive-list-grid">
             {filteredDrives.map((drive) => (
-              <DriveCard 
-                key={drive._id} 
-                drive={drive} 
-                user={user} 
-                refresh={load} 
+              <DriveCard
+                key={drive._id}
+                drive={drive}
+                user={user}
+                refresh={load}
                 requests={requests}
                 onDelete={user.role === "HOD" ? handleDeleteDrive : undefined}
                 selected={selectedDriveIds.includes(drive._id)}
@@ -1840,8 +1852,8 @@ function DriveWisePage({ user, initialTab = "drives" }) {
           </div>
 
           {/* Graphical Bar Chart Representation */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px" }}>
-            {displayReports.map((rep) => {
+          <div className="report-card-grid">
+            {visibleReportCards.map((rep) => {
               const maxCount = Math.max(rep.totalEligible || 0, rep.totalRegistered || 0, rep.totalSelected || 0, rep.grandTotal || 0, 1);
               return (
                 <div key={rep.reportId} className="report-visual-card">
@@ -1894,6 +1906,18 @@ function DriveWisePage({ user, initialTab = "drives" }) {
             })}
             {!displayReports.length && <EmptyState message={`No ${activeReportConfig.title.toLowerCase()} data available for this filter`} />}
           </div>
+          {reportMode === "company" && selectedCompanyFilter === "ALL" && displayReports.length > 6 && (
+            <div className="report-view-more">
+              <button className="soft" type="button" onClick={() => setShowAllCompanyCards((current) => !current)}>
+                {showAllCompanyCards ? "Show only 6 drives" : `View all drives (${displayReports.length})`}
+              </button>
+              <span>
+                {showAllCompanyCards
+                  ? `Showing all ${displayReports.length} company drives`
+                  : `Showing 6 of ${displayReports.length} company drives`}
+              </span>
+            </div>
+          )}
 
           {activeBreakdownSection && (
             <ReportBreakdownTables sections={[activeBreakdownSection]} />

@@ -9,6 +9,13 @@ export function calculateDriveAttendance(registrationStatus, roundHistory = []) 
     };
   }
 
+  if (["NOT_CONTACTED", "NOTIFIED", "REGISTRATION_PENDING", "REGISTRATION_LINK_ISSUE"].includes(registrationStatus)) {
+    return {
+      overallAttendanceStatus: "PENDING",
+      overallAttendanceReason: "Registration data was blank or not recognized in the uploaded sheet; this drive is not counted as absent."
+    };
+  }
+
   if (registrationStatus !== "REGISTERED") {
     return {
       overallAttendanceStatus: "OVERALL_ABSENT",

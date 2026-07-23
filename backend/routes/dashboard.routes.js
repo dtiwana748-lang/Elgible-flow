@@ -95,7 +95,10 @@ router.get("/summary", requireAuth, async (req, res) => {
 
   const driveFilter = req.user.role === "HOD" ? {} : { createdBy: req.user._id };
   const linkedConnectionIds = await SpreadsheetConnection.distinct("_id");
-  const masterStudentFilter = { "source.connection": linkedConnectionIds.length ? { $in: linkedConnectionIds } : { $in: [] } };
+  const masterStudentFilter = {
+    "source.connection": linkedConnectionIds.length ? { $in: linkedConnectionIds } : { $in: [] },
+    sourceStatus: { $nin: ["MISSING_FROM_SOURCE", "ARCHIVED_FROM_SOURCE"] }
+  };
   const stuckOffStatusValues = ["Stuck Off", "Struck Off", "STUCK_OFF", "STRUCK_OFF"];
   const activeStatusFilter = {
     $and: [

@@ -10,7 +10,10 @@ import { filterEligibleStudents, calculateEligibility } from "../utils/studentRu
 import { writeAudit } from "../utils/audit.js";
 
 const router = Router();
-const masterStudentFilter = { "source.connection": { $exists: true, $ne: null } };
+const masterStudentFilter = {
+  "source.connection": { $exists: true, $ne: null },
+  sourceStatus: { $nin: ["MISSING_FROM_SOURCE", "ARCHIVED_FROM_SOURCE"] }
+};
 const ELIGIBILITY_EXPORT_FIELDS = {
   srNo: { label: "Sr No", virtual: true, width: 8 },
   rollNo: { label: "Roll No", width: 18 },

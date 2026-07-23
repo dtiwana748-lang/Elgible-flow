@@ -209,7 +209,7 @@ function identifierKeys(value) {
 function readAttendanceMatrix(file) {
   const name = file.originalname.toLowerCase();
   if (name.endsWith(".csv")) {
-    return parse(file.buffer, { columns: false, skip_empty_lines: false, trim: true });
+    return parse(file.buffer, { columns: false, skip_empty_lines: false, trim: true, relax_column_count: true });
   }
   if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
     const workbook = xlsx.read(file.buffer, { type: "buffer", cellDates: true });
@@ -369,8 +369,15 @@ function rowHasDataInRange(row, range) {
 function makeRowIdentity(row) {
   const roll = cleanId(pickColumn(row, ["rollno", "rollnumber", "universityrollnumber", "universityroll"]));
   const email = String(pickColumn(row, ["studentemailid", "studentemail", "emailid", "email", "mail"]) || "").trim().toLowerCase();
+  const name = cellText(pickColumn(row, ["studentname", "candidatename", "fullname", "name"])).toLowerCase();
   const company = cellText(pickColumn(row, ["companyname", "company", "organisation", "organization"])).toLowerCase();
-  const studentKey = roll ? `roll:${roll.toLowerCase()}` : email ? `email:${email}` : "";
+  const studentKey = roll
+    ? `roll:${roll.toLowerCase()}|name:${name}`
+    : email
+      ? `email:${email}|name:${name}`
+      : name
+        ? `name:${name}`
+        : "";
   return studentKey ? `${studentKey}|company:${company}` : "";
 }
 
@@ -411,6 +418,14 @@ function nearestCell(row, anchorIndex, predicate, maxDistance = 5) {
   return "";
 }
 
+function isExplicitRegistrationValue(value) {
+  const text = cellText(value).toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+  return [
+    "registered", "not registered", "unregistered",
+    "yes", "no", "y", "n", "true", "false", "1", "0"
+  ].includes(text);
+}
+
 function mergeNormalizedRow(rowMap, orderedKeys, row) {
   const id = makeRowIdentity(row) || `row:${orderedKeys.length + 1}:${cellText(row["Student Name"])}:${cellText(row["Student Email ID"])}`;
   if (!rowMap.has(id)) {
@@ -421,9 +436,31 @@ function mergeNormalizedRow(rowMap, orderedKeys, row) {
 
   const existing = rowMap.get(id);
   for (const [key, value] of Object.entries(row)) {
+    if (key === "Registration") {
+      const incomingIsExplicit = Boolean(row.__registrationExplicit);
+      const existingIsExplicit = Boolean(existing.__registrationExplicit);
+      if (value && (incomingIsExplicit || !existing[key])) {
+        // A value read from the actual Registration cell is authoritative.
+        // It must replace section-inferred values such as "Registered List".
+        // When two explicit duplicate rows conflict, retain the first physical
+        // row instead of silently moving a later block's value onto this row.
+        if (!existingIsExplicit || !existing[key]) existing[key] = value;
+      }
+      continue;
+    }
     if (value && !existing[key]) existing[key] = value;
   }
+  if (row.__registrationExplicit) {
+    Object.defineProperty(existing, "__registrationExplicit", { value: true, writable: true, configurable: true });
+  }
   return false;
+}
+
+function markExplicitRegistration(row, isExplicit) {
+  if (isExplicit) {
+    Object.defineProperty(row, "__registrationExplicit", { value: true, writable: true, configurable: true });
+  }
+  return row;
 }
 
 function rescueRowsFromNoisyMatrix(cleanedMatrix, fallbackCompany, rowMap, orderedKeys) {
@@ -449,11 +486,12 @@ function rescueRowsFromNoisyMatrix(cleanedMatrix, fallbackCompany, rowMap, order
         : nearestCell(row, anchorIndex, isLikelyRoll, 6);
       const studentName = nearestCell(row, anchorIndex, isLikelyNameCell, 4);
       const course = nearestCell(row, anchorIndex, isLikelyCourse, 5);
+      const registration = nearestCell(row, anchorIndex, isExplicitRegistrationValue, 10);
 
       if (!email && !rollNo) continue;
       if (!studentName && !email) continue;
 
-      const normalized = {
+      const normalized = markExplicitRegistration({
         "Company Name": fallbackCompany,
         "Roll No": rollNo,
         "Student Name": studentName,
@@ -462,11 +500,10 @@ function rescueRowsFromNoisyMatrix(cleanedMatrix, fallbackCompany, rowMap, order
         Course: course,
         "Campus Name": "",
         Eligibility: "",
-        // Without a detected header, the exact registration column is unknown.
-        // Keep it blank instead of manufacturing a positive registration.
-        Registration: "",
+        // Recover only exact registration tokens; unknown values remain blank.
+        Registration: registration,
         Attendance: ""
-      };
+      }, Boolean(registration));
 
       if (mergeNormalizedRow(rowMap, orderedKeys, normalized)) rescued += 1;
     }
@@ -485,6 +522,12 @@ function normalizeFlatAttendanceTable(cleanedMatrix, fallbackCompany) {
   if (headerRowIndex < 0) return null;
 
   const sourceHeaders = cleanedMatrix[headerRowIndex];
+  const registrationColumnIndexes = sourceHeaders
+    .map((header, index) => {
+      const key = normalizeHeader(header);
+      return (key.includes("registered") || key.includes("registration") || key === "register") ? index : -1;
+    })
+    .filter((index) => index >= 0);
   const usedHeaders = new Map();
   const headers = sourceHeaders.map((header, index) => {
     const base = canonicalAttendanceHeader(header) || `Column ${index + 1}`;
@@ -497,15 +540,23 @@ function normalizeFlatAttendanceTable(cleanedMatrix, fallbackCompany) {
 
   for (let rowIndex = headerRowIndex + 1; rowIndex < cleanedMatrix.length; rowIndex += 1) {
     const dataRow = cleanedMatrix[rowIndex] || [];
-    if (!dataRow.some((value) => cellText(value))) continue;
+    if (!dataRow.some((value) => cellText(value))) {
+      continue;
+    }
+    if (dataRow.some((value) => normalizeHeader(value).startsWith("worksheet"))) break;
     if (looksLikeHeaderInRange(dataRow, { start: 0, end: Math.max(dataRow.length - 1, 0) })) continue;
 
     const raw = {};
     headers.forEach((header, index) => {
       raw[header] = cellText(dataRow[index]);
     });
+    const exactRegistration = [...registrationColumnIndexes]
+      .reverse()
+      .map((index) => cellText(dataRow[index]))
+      .find((value) => isExplicitRegistrationValue(value)) || "";
     const normalized = {
       "Sr No": rows.length + 1,
+      "Source Row": rowIndex + 1,
       "Company Name": raw["Company Name"] || fallbackCompany,
       "Roll No": raw["Roll No"] || "",
       "Student Name": raw["Student Name"] || "",
@@ -514,7 +565,7 @@ function normalizeFlatAttendanceTable(cleanedMatrix, fallbackCompany) {
       Course: raw.Course || "",
       "Campus Name": raw["Campus Name"] || "",
       Eligibility: raw.Eligibility || "",
-      Registration: raw.Registration || "",
+      Registration: exactRegistration,
       Attendance: raw.Attendance || ""
     };
     for (const [header, value] of Object.entries(raw)) {
@@ -525,11 +576,13 @@ function normalizeFlatAttendanceTable(cleanedMatrix, fallbackCompany) {
       if (!isMetaAttendanceColumn(header)) processHeaders.add(header);
     }
 
-    const hasStudent = normalized["Roll No"] || normalized["Student Name"] || normalized["Student Email ID"];
-    if (hasStudent) rows.push(normalized);
+    // Strict composite identity: never attach data from a shifted or partial
+    // row. Company order is irrelevant because every row carries its company.
+    const hasCompositeIdentity = normalized["Roll No"] && normalized["Student Name"] && normalized["Company Name"];
+    if (hasCompositeIdentity) rows.push(normalized);
   }
 
-  const fixedHeaders = ["Sr No", "Company Name", "Roll No", "Student Name", "Student Email ID", "Branch", "Course", "Campus Name", "Eligibility", "Registration", "Attendance"];
+  const fixedHeaders = ["Sr No", "Source Row", "Company Name", "Roll No", "Student Name", "Student Email ID", "Branch", "Course", "Campus Name", "Eligibility", "Registration", "Attendance"];
   const outputHeaders = [...fixedHeaders, ...Array.from(processHeaders).filter((header) => !fixedHeaders.includes(header))];
   rows.forEach((row) => outputHeaders.forEach((header) => {
     if (row[header] === undefined) row[header] = "";
@@ -605,7 +658,7 @@ function normalizeAttendanceRowsFromMatrix(matrix, fileName, companyOverride = "
         const serialOnly = Object.entries(raw).every(([header, value]) => !value || canonicalAttendanceHeader(header) === "Sr No");
         if (serialOnly) continue;
 
-        const normalized = {
+        const normalized = markExplicitRegistration({
           "Company Name": raw["Company Name"] || fallbackCompany,
           "Roll No": raw["Roll No"] || "",
           "Student Name": raw["Student Name"] || "",
@@ -616,7 +669,7 @@ function normalizeAttendanceRowsFromMatrix(matrix, fileName, companyOverride = "
           Eligibility: raw.Eligibility || (sectionType === "ELIGIBLE" ? "Eligible" : ""),
           Registration: raw.Registration || (sectionType === "REGISTERED" ? "Registered" : ""),
           Attendance: raw.Attendance || ""
-        };
+        }, Boolean(raw.Registration));
 
         for (const [header, value] of Object.entries(raw)) {
           if (!value) continue;
@@ -633,7 +686,10 @@ function normalizeAttendanceRowsFromMatrix(matrix, fileName, companyOverride = "
 
   const rescuedRows = rescueRowsFromNoisyMatrix(cleanedMatrix, fallbackCompany, rowMap, orderedKeys);
 
-  const rows = orderedKeys.map((key, index) => ({ "Sr No": index + 1, ...rowMap.get(key) }));
+  const rows = orderedKeys.map((key, index) => {
+    const source = rowMap.get(key);
+    return markExplicitRegistration({ "Sr No": index + 1, ...source }, Boolean(source.__registrationExplicit));
+  });
   const fixedHeaders = ["Sr No", "Company Name", "Roll No", "Student Name", "Student Email ID", "Branch", "Course", "Campus Name", "Eligibility", "Registration", "Attendance"];
   const headers = [...fixedHeaders, ...Array.from(processHeaders).filter((header) => !fixedHeaders.includes(header))];
   for (const row of rows) {
@@ -666,8 +722,8 @@ function parseAttendanceRows(file, options = {}) {
   if (!rows.length) {
     const name = file.originalname.toLowerCase();
     if (name.endsWith(".csv")) {
-      rows = parse(file.buffer, { columns: true, skip_empty_lines: true, trim: true });
-      const temp = parse(file.buffer, { columns: false, skip_empty_lines: true, trim: true, to_line: 1 });
+      rows = parse(file.buffer, { columns: true, skip_empty_lines: true, trim: true, relax_column_count: true });
+      const temp = parse(file.buffer, { columns: false, skip_empty_lines: true, trim: true, relax_column_count: true, to_line: 1 });
       headers = temp.length ? temp[0] : [];
     } else {
       const workbook = xlsx.read(file.buffer, { type: "buffer", cellDates: true });
@@ -692,6 +748,23 @@ function parseAttendanceRows(file, options = {}) {
     return true;
   });
 
+  // Enforce one authoritative row per Roll No + Student Name + Company.
+  // This prevents a later repeated block from swapping registration values.
+  const consolidatedRows = new Map();
+  const consolidatedOrder = [];
+  for (const row of rows) {
+    const registration = pickColumn(row, ["registrationstatus", "registration", "registered", "register"]);
+    const registrationIsExplicit = normalized.normalization.mode === "FLAT_TABLE" || normalized.normalization.normalized === false
+      ? Boolean(cellText(registration))
+      : Boolean(row.__registrationExplicit);
+    const preparedRow = markExplicitRegistration(row, registrationIsExplicit);
+    mergeNormalizedRow(consolidatedRows, consolidatedOrder, preparedRow);
+  }
+  rows = consolidatedOrder.map((key, index) => {
+    const source = consolidatedRows.get(key);
+    return { ...source, "Sr No": index + 1 };
+  });
+
   return { headers, rows, normalization: normalized.normalization };
 }
 
@@ -708,7 +781,7 @@ function normalizeAttendanceStatus(value) {
 
 function normalizeRegistrationStatus(value) {
   const text = String(value || "").trim().toLowerCase();
-  if (!text) return "NOT_REGISTERED";
+  if (!text) return "NOT_CONTACTED";
   if (
     text.includes("not registered") ||
     text.includes("notregistered") ||
@@ -716,8 +789,8 @@ function normalizeRegistrationStatus(value) {
     ["no", "n", "0", "false"].includes(text)
   ) return "NOT_REGISTERED";
   if (["registered", "yes", "y", "1", "true"].includes(text)) return "REGISTERED";
-  // Never invent a positive registration for an unrecognized spreadsheet value.
-  return "NOT_REGISTERED";
+  // Never invent either a positive or a negative status from malformed data.
+  return "NOT_CONTACTED";
 }
 
 function buildStudentLookup(row) {
@@ -742,7 +815,7 @@ function isMetaAttendanceColumn(header) {
   const key = normalizeHeader(header);
   if (/^column\d+$/.test(key)) return true;
   const exactMetas = [
-    "sr", "srno", "sno", "slno", "serial", "serialno", "index", "no",
+    "sr", "srno", "sno", "slno", "serial", "serialno", "index", "no", "sourcerow",
     "gender", "gen", "sex", "branch", "department", "course", "program", "batch",
     "company", "companyname", "eligible", "eligibility", "elgible", "registered", "register", "remark", "remarks", "note", "notes"
   ];
@@ -1100,18 +1173,23 @@ function findStudentInMap(row, studentMaps) {
   const name = pickColumn(row, ["studentname", "candidatename", "fullname", "name"], ["company", "organisation", "organization", "father", "mother", "parent"]);
 
   const fromIdentifiers = (map, value) => identifierKeys(value).map((key) => map.get(key)).find(Boolean);
-  const grMatch = fromIdentifiers(studentMaps.byGrNo, grNo);
-  if (grMatch) return grMatch;
-  const universityMatch = fromIdentifiers(studentMaps.byUniversityId, universityId);
-  if (universityMatch) return universityMatch;
-  const enrollmentMatch = fromIdentifiers(studentMaps.byEnrollment, enrollmentNo);
-  if (enrollmentMatch) return enrollmentMatch;
-  const registrationMatch = fromIdentifiers(studentMaps.byRegNo, registrationNo);
-  if (registrationMatch) return registrationMatch;
+  const rowName = cellText(name).toLowerCase();
+  const nameAgrees = (student) => !rowName || cellText(student?.name).toLowerCase() === rowName;
+  // Attendance rows are anchored by Roll No first. A conflicting name means
+  // the row is misaligned and must be rejected instead of attached to a student.
   const rollMatch = fromIdentifiers(studentMaps.byRollNo, rollNo);
-  if (rollMatch) return rollMatch;
+  if (rollMatch) return nameAgrees(rollMatch) ? rollMatch : null;
+  const grMatch = fromIdentifiers(studentMaps.byGrNo, grNo);
+  if (grMatch) return nameAgrees(grMatch) ? grMatch : null;
+  const universityMatch = fromIdentifiers(studentMaps.byUniversityId, universityId);
+  if (universityMatch) return nameAgrees(universityMatch) ? universityMatch : null;
+  const enrollmentMatch = fromIdentifiers(studentMaps.byEnrollment, enrollmentNo);
+  if (enrollmentMatch) return nameAgrees(enrollmentMatch) ? enrollmentMatch : null;
+  const registrationMatch = fromIdentifiers(studentMaps.byRegNo, registrationNo);
+  if (registrationMatch) return nameAgrees(registrationMatch) ? registrationMatch : null;
   if (email && studentMaps.byEmail.has(String(email).trim().toLowerCase())) {
-    return studentMaps.byEmail.get(String(email).trim().toLowerCase());
+    const emailMatch = studentMaps.byEmail.get(String(email).trim().toLowerCase());
+    return nameAgrees(emailMatch) ? emailMatch : null;
   }
   if (name) {
     const nameMatches = studentMaps.byName.get(cellText(name).toLowerCase()) || [];
@@ -1547,23 +1625,26 @@ router.get("/", async (req, res) => {
     {
       $group: {
         _id: "$drive",
+        preparedByNames: { $first: "$preparedByNames" },
         rowCount: { $first: "$rowCount" },
         uploadRows: { $first: "$uploadResult.rows" },
         rowsSize: { $first: { $cond: [{ $isArray: "$rows" }, { $size: "$rows" }, 0] } }
       }
     }
   ]);
-  const sheetRowsByDrive = new Map(latestSheets.map((sheet) => [
-    sheet._id.toString(),
-    sheet.rowCount || sheet.uploadRows || sheet.rowsSize || 0
-  ]));
+  const latestSheetByDrive = new Map(latestSheets.map((sheet) => [sheet._id.toString(), {
+    rowCount: sheet.rowCount || sheet.uploadRows || sheet.rowsSize || 0,
+    preparedByNames: (sheet.preparedByNames || []).filter(Boolean)
+  }]));
   res.json(drives.map((drive) => {
     const computed = statsByDrive.get(drive._id.toString()) || drive.stats || {};
-    const uploadedRows = sheetRowsByDrive.get(drive._id.toString()) || 0;
+    const latestSheet = latestSheetByDrive.get(drive._id.toString()) || {};
+    const uploadedRows = latestSheet.rowCount || 0;
     const eligibleStudents = uploadedRows || computed.eligibleStudents || 0;
     const registeredStudents = Math.min(computed.registeredStudents || 0, eligibleStudents);
     return {
       ...drive,
+      preparedByNames: latestSheet.preparedByNames || [],
       stats: {
         ...computed,
         eligibleStudents,
@@ -2583,5 +2664,5 @@ router.post("/access-requests/:id/decision", requireAuth, requireRole("HOD"), as
   }
 });
 
-export { normalizeAttendanceRowsFromMatrix };
+export { normalizeAttendanceRowsFromMatrix, parseAttendanceRows };
 export default router;
