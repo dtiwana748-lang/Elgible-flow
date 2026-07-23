@@ -17,6 +17,7 @@ import spreadsheetRoutes from "./routes/spreadsheet.routes.js";
 import driveRoutes from "./routes/drive.routes.js";
 import recordsRoutes from "./routes/records.routes.js";
 import eligibilityRoutes from "./routes/eligibility.routes.js";
+import studentPortalRoutes from "./routes/student-portal.routes.js";
 import { startAutoSyncInterval } from "./utils/autoSync.js";
 
 const app = express();
@@ -131,6 +132,7 @@ app.use("/api/spreadsheets", spreadsheetRoutes);
 app.use("/api/drives", driveRoutes);
 app.use("/api/records", recordsRoutes);
 app.use("/api/eligibility", eligibilityRoutes);
+app.use("/api/student-portal", studentPortalRoutes);
 
 // Catch-all for React Router
 app.get("*", (req, res) => {

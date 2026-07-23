@@ -65,7 +65,7 @@ function inferSystemField(header) {
   if (key.includes("course")) return "course";
   if (key.includes("program")) return "program";
   if (key.includes("specialization")) return "specialization";
-  if (key.includes("currentsemester") || key.includes("semester") || key === "sem") return "semester";
+  if (key === "currentsemester" || key === "semester" || key === "sem") return "semester";
   if (key.includes("section")) return "section";
   if (key.includes("average") && key.includes("cgpa")) return "cgpa";
   if (key.includes("cgpa")) return "cgpa";
@@ -112,8 +112,12 @@ function inferSystemField(header) {
 function effectiveMapping(row, mapping = {}) {
   const finalMapping = { ...mapping };
   for (const header of Object.keys(row)) {
+    const inferred = inferSystemField(header);
+    if (finalMapping[header] === "semester" && inferred.startsWith("semester.")) {
+      finalMapping[header] = inferred;
+      continue;
+    }
     if (!finalMapping[header] || finalMapping[header] === "customFields") {
-      const inferred = inferSystemField(header);
       if (inferred !== "customFields") finalMapping[header] = inferred;
     }
   }

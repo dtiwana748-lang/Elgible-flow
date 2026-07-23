@@ -12,6 +12,7 @@ const hodNav = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "eligibility", label: "Eligibility Lists", icon: ListChecks },
   { id: "drives", label: "Drives & Reports", icon: BriefcaseBusiness },
+  { id: "student-requests", label: "Student Requests", icon: FileSearch },
   { id: "managers", label: "Managers", icon: UsersRound },
   { id: "records", label: "Records", icon: Database },
   { id: "profile", label: "Profile", icon: UserCog }
@@ -134,6 +135,7 @@ export default function Dashboard() {
         {active === "dashboard" && <DashboardHome user={user} setActive={setActive} setDriveInitialTab={setDriveInitialTab} />}
         {active === "managers" && isHod && <ManagersPage />}
         {active === "records" && isHod && <RecordsPage />}
+        {active === "student-requests" && isHod && <StudentRequestsPage />}
         {active === "eligibility" && <EligibilityListsPage setSelectedList={setSelectedEligibilityList} setActive={setActive} isHod={isHod} />}
         {active === "create-eligibility" && !isHod && <CreateEligibilityListPage onComplete={(list) => { setSelectedEligibilityList(list); setActive("eligibility"); }} />}
         {active === "view-eligibility" && selectedEligibilityList && <EligibilityListDetailPage list={selectedEligibilityList} back={() => setActive("eligibility")} isHod={isHod} />}
@@ -2949,6 +2951,109 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
       </div>
     </div>
     , document.body
+  );
+}
+
+function StudentRequestsPage() {
+  const [requests, setRequests] = useState([]);
+  const [status, setStatus] = useState("PENDING");
+  const [remarks, setRemarks] = useState({});
+  const [message, setMessage] = useState("");
+  const [busyId, setBusyId] = useState("");
+
+  async function load() {
+    try {
+      setRequests(await api(`/student-portal/requests?status=${status}`));
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  useEffect(() => { load(); }, [status]);
+
+  async function viewProof(request) {
+    try {
+      const blob = await downloadApiFile(`/student-portal/requests/${request._id}/proof`);
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  async function decide(requestId, decision) {
+    setBusyId(requestId);
+    setMessage("");
+    try {
+      const result = await api(`/student-portal/requests/${requestId}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ decision, remarks: remarks[requestId] || "" })
+      });
+      const syncText = decision === "APPROVED" ? ` Write-back: ${result.writeBackStatus}.` : "";
+      setMessage(`Request ${decision.toLowerCase()} successfully.${syncText}`);
+      await load();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  return (
+    <>
+      <PageHeader eyebrow="Student Data Governance" title="Student Correction Requests" subtitle="Verify proof, review requested values, and control updates to master data">
+        <button className="soft" onClick={load}><RefreshCcw size={17} /> Refresh</button>
+      </PageHeader>
+      {message && <div className={message.includes("successfully") ? "notice" : "notice error"}>{message}</div>}
+      <section className="student-request-toolbar">
+        {["PENDING", "APPROVED", "REJECTED", "ALL"].map((item) => (
+          <button key={item} className={status === item ? "" : "soft"} onClick={() => setStatus(item)}>{item.replace("_", " ")}</button>
+        ))}
+      </section>
+      <section className="student-request-list">
+        {!requests.length ? <EmptyState message={`No ${status === "ALL" ? "" : status.toLowerCase()} student correction requests`} /> : requests.map((request) => (
+          <article key={request._id} className="student-request-card">
+            <header>
+              <div className="manager-name-cell">
+                <div className="header-profile manager-avatar"><span>{request.studentName?.slice(0, 1).toUpperCase()}</span></div>
+                <div><h3>{request.studentName}</h3><p>{request.rollNo} · {request.student?.department || request.student?.branch || "-"}</p></div>
+              </div>
+              <div><span className={`status ${request.status === "PENDING" ? "pending" : request.status === "APPROVED" ? "approved" : "rejected"}`}>{request.status}</span><small>{formatDateTime(request.createdAt)}</small></div>
+            </header>
+            <div className="student-request-message"><strong>Student explanation</strong><p>{request.message}</p></div>
+            <div className="student-request-changes">
+              {request.changes.map((change) => (
+                <div key={change.field}>
+                  <strong>{change.label}</strong>
+                  <span><small>Current value</small>{change.currentValue === null || change.currentValue === undefined || change.currentValue === "" ? "-" : String(change.currentValue)}</span>
+                  <span className="requested"><small>Requested value</small>{String(change.requestedValue)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="student-request-proof">
+              <button className="soft" onClick={() => viewProof(request)}><Eye size={17} /> View Supporting Proof</button>
+              <span>{request.proofOriginalName}</span>
+            </div>
+            {request.status === "PENDING" ? (
+              <div className="student-request-decision">
+                <label>HOD remarks
+                  <textarea rows={2} value={remarks[request._id] || ""} onChange={(event) => setRemarks({ ...remarks, [request._id]: event.target.value })} placeholder="Add verification notes or rejection reason" />
+                </label>
+                <button className="soft danger-action" disabled={busyId === request._id} onClick={() => decide(request._id, "REJECTED")}>Reject</button>
+                <button disabled={busyId === request._id} onClick={() => decide(request._id, "APPROVED")}><CheckCircle2 size={17} /> Approve & Update</button>
+              </div>
+            ) : (
+              <div className="student-request-review">
+                <span>Reviewed by {request.reviewedBy?.name || "HOD"} on {formatDateTime(request.reviewedAt)}</span>
+                <span>Sheet write-back: <strong>{request.writeBackStatus}</strong></span>
+                {request.hodRemarks && <p>{request.hodRemarks}</p>}
+              </div>
+            )}
+          </article>
+        ))}
+      </section>
+    </>
   );
 }
 

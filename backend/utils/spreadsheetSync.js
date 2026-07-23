@@ -23,17 +23,17 @@ function statusColumnsFromMapping(mapping) {
 
 export async function triggerSpreadsheetUpdate(student, options = {}) {
   if (!student || !student.source || !student.source.connection || !student.source.rowNumber) {
-    return;
+    return { ok: false, skipped: true, message: "Student is not linked to a writable spreadsheet row." };
   }
 
   try {
     const connection = await SpreadsheetConnection.findById(student.source.connection);
-    if (!connection) return;
+    if (!connection) return { ok: false, skipped: true, message: "Spreadsheet connection was not found." };
 
     const appsScriptUrl = connection.appsScriptUrl || process.env.GOOGLE_APPS_SCRIPT_URL;
     if (!appsScriptUrl) {
       console.log(`[SpreadsheetSync] Skipped write-back. No Google Apps Script Web App URL configured for ${connection.name}`);
-      return;
+      return { ok: false, skipped: true, message: "No Google Apps Script write-back URL is configured." };
     }
 
     const mapping = connection.columnMapping || {};
@@ -48,7 +48,7 @@ export async function triggerSpreadsheetUpdate(student, options = {}) {
 
     if (options.skipNoc && sheetStatus === "NOC") {
       console.log(`[SpreadsheetSync] Skipped write-back for NOC student ${student.name}.`);
-      return;
+      return { ok: false, skipped: true, message: "NOC record was intentionally not written back." };
     }
 
     if (options.statusOnly) {
@@ -103,10 +103,13 @@ export async function triggerSpreadsheetUpdate(student, options = {}) {
     if (response.ok) {
       const resData = await response.json().catch(() => ({}));
       console.log(`[SpreadsheetSync] Google Sheet write-back success:`, resData);
+      return { ok: true, skipped: false, message: "Master Google Sheet updated successfully.", data: resData };
     } else {
       console.error(`[SpreadsheetSync] Write-back HTTP status ${response.status}`);
+      return { ok: false, skipped: false, message: `Google Sheet write-back returned HTTP ${response.status}.` };
     }
   } catch (error) {
     console.error("[SpreadsheetSync] Error in write-back:", error.message);
+    return { ok: false, skipped: false, message: error.message };
   }
 }
