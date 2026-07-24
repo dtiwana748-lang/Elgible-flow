@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   BarChart3, Bell, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
-  FileDown, Gauge, GraduationCap, Home, Info, LayoutDashboard, ListChecks, LogOut, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users, UsersRound, X
+  Crop, FileDown, Gauge, GraduationCap, Home, Info, LayoutDashboard, ListChecks, LogOut, MoveHorizontal, MoveVertical, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users, UsersRound, X, ZoomIn
 } from "lucide-react";
 import { api, downloadApiFile } from "../api.js";
 import { assetUrl } from "../api.js";
@@ -761,9 +761,16 @@ function ManagersPage() {
   const [form, setForm] = useState({ name: "", email: "", personalEmail: "", password: "" });
   const [editingId, setEditingId] = useState("");
   const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState("success");
+  const [confirmAction, setConfirmAction] = useState(null);
 
   async function load() {
-    setManagers(await api("/users"));
+    try {
+      setManagers(await api("/users"));
+    } catch (error) {
+      setMessageType("error");
+      setMessage(`Unable to load placement officers: ${error.message}`);
+    }
   }
   useEffect(() => { load(); }, []);
 
@@ -785,35 +792,53 @@ function ManagersPage() {
 
   async function saveManager(event) {
     event.preventDefault();
-    const payload = { ...form };
-    if (!payload.password) delete payload.password;
-    await api(editingId ? `/users/${editingId}` : "/users", {
-      method: editingId ? "PATCH" : "POST",
-      body: JSON.stringify(payload)
-    });
-    const wasEditing = Boolean(editingId);
-    resetManagerForm();
-    setMessage(wasEditing ? "Placement Officer account updated" : "Placement Officer account created");
-    load();
+    try {
+      const payload = { ...form };
+      if (!payload.password) delete payload.password;
+      await api(editingId ? `/users/${editingId}` : "/users", {
+        method: editingId ? "PATCH" : "POST",
+        body: JSON.stringify(payload)
+      });
+      const wasEditing = Boolean(editingId);
+      resetManagerForm();
+      setMessageType("success");
+      setMessage(wasEditing ? "Placement Officer account updated successfully." : "Placement Officer account created successfully.");
+      await load();
+    } catch (error) {
+      setMessageType("error");
+      setMessage(`Unable to save placement officer: ${error.message}`);
+    }
   }
 
   async function toggleManager(manager) {
-    await api(`/users/${manager.id}/status`, {
-      method: "PATCH",
-      body: JSON.stringify({ active: !manager.active })
-    });
-    setMessage(`${manager.name} is now ${manager.active ? "inactive" : "active"}`);
-    load();
+    try {
+      await api(`/users/${manager.id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ active: !manager.active })
+      });
+      setMessageType("success");
+      setMessage(`${manager.name} is now ${manager.active ? "inactive" : "active"}.`);
+      await load();
+    } catch (error) {
+      setMessageType("error");
+      setMessage(`Unable to update ${manager.name}: ${error.message}`);
+    }
   }
 
-  async function deleteManager(manager) {
-    const confirmed = window.confirm(`Delete ${manager.name}'s Placement Officer account? This removes login access but keeps historical records.`);
-    if (!confirmed) return;
-
-    await api(`/users/${manager.id}`, { method: "DELETE" });
-    if (editingId === manager.id) resetManagerForm();
-    setMessage(`${manager.name}'s account was deleted`);
-    load();
+  function deleteManager(manager) {
+    setConfirmAction({
+      title: "Delete placement officer?",
+      message: `${manager.name} will immediately lose login access. Their historical drives and records will remain available to the HOD.`,
+      confirmLabel: "Delete Account",
+      cancelLabel: "Keep Account",
+      onConfirm: async () => {
+        await api(`/users/${manager.id}`, { method: "DELETE" });
+        if (editingId === manager.id) resetManagerForm();
+        setMessageType("success");
+        setMessage(`${manager.name}'s account was deleted successfully.`);
+        await load();
+      }
+    });
   }
 
   return (
@@ -821,7 +846,7 @@ function ManagersPage() {
       <PageHeader eyebrow="Manager Administration" title="Placement Officers" subtitle="Create and manage Placement Officer accounts">
         <button><UserPlus size={17} /> Create Manager</button>
       </PageHeader>
-      {message && <div className="notice">{message}</div>}
+      {message && <div className={`notice manager-notice ${messageType === "error" ? "error" : "success"}`} role="status">{message}</div>}
       <section className="panel">
         <h3>{editingId ? "Edit Manager" : "Create Manager"}</h3>
         <form className="manager-simple-form" onSubmit={saveManager}>
@@ -861,6 +886,17 @@ function ManagersPage() {
           ])}
         />
       </section>
+      {confirmAction && (
+        <ConfirmDialog
+          {...confirmAction}
+          onCancel={() => setConfirmAction(null)}
+          onDone={() => setConfirmAction(null)}
+          onError={(errorMessage) => {
+            setMessageType("error");
+            setMessage(`Unable to delete account: ${errorMessage}`);
+          }}
+        />
+      )}
     </>
   );
 }
@@ -1321,6 +1357,8 @@ function FilterBar({ filters, setFilters }) {
 
 function DriveWisePage({ user, initialTab = "drives" }) {
   const [drives, setDrives] = useState([]);
+  const [placementOfficers, setPlacementOfficers] = useState([]);
+  const [selectedOfficerId, setSelectedOfficerId] = useState(null);
   const [stuckOff, setStuckOff] = useState([]);
   const [requests, setRequests] = useState([]);
   const [reports, setReports] = useState([]);
@@ -1338,8 +1376,62 @@ function DriveWisePage({ user, initialTab = "drives" }) {
   const [showAllCompanyCards, setShowAllCompanyCards] = useState(false);
 
   const isMaker = user.role === "LIST_MAKER";
+  const allOfficerCards = useMemo(() => {
+    if (isMaker) return [];
+    const normalizeOfficerName = (value) => String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const knownOfficers = new Map();
+    const accountsByName = new Map();
 
-  const filteredDrives = drives.filter((drive) => {
+    placementOfficers.forEach((officer) => {
+      const normalizedName = normalizeOfficerName(officer.name);
+      const card = { ...officer, cardKey: `account:${officer.id}`, drives: [] };
+      knownOfficers.set(card.cardKey, card);
+      if (normalizedName) accountsByName.set(normalizedName, card);
+    });
+
+    drives.forEach((drive) => {
+      const preparedNames = [...new Set(
+        (drive.preparedByNames || []).map((name) => String(name || "").trim()).filter(Boolean)
+      )];
+
+      if (preparedNames.length) {
+        preparedNames.forEach((preparedName) => {
+          const normalizedName = normalizeOfficerName(preparedName);
+          let card = accountsByName.get(normalizedName);
+          if (!card) {
+            const cardKey = `prepared:${normalizedName}`;
+            card = knownOfficers.get(cardKey);
+            if (!card) {
+              card = { cardKey, id: cardKey, name: preparedName, email: "", profileImage: "", active: true, drives: [] };
+              knownOfficers.set(cardKey, card);
+            }
+          }
+          if (!card.drives.some((item) => item._id === drive._id)) card.drives.push(drive);
+        });
+        return;
+      }
+
+      // Older drives may not contain a Prepared by value, so retain their uploader as a fallback.
+      const creator = drive.createdBy;
+      if (!creator?._id) return;
+      const cardKey = `account:${creator._id}`;
+      let card = knownOfficers.get(cardKey);
+      if (!card) {
+        card = { id: creator._id, ...creator, cardKey, drives: [] };
+        knownOfficers.set(cardKey, card);
+      }
+      card.drives.push(drive);
+    });
+
+    return [...knownOfficers.values()]
+      .sort((a, b) => b.drives.length - a.drives.length || (a.name || "").localeCompare(b.name || ""));
+  }, [drives, placementOfficers, isMaker]);
+  const officerCards = allOfficerCards.filter((officer) => (
+    [officer.name, officer.email].join(" ").toLowerCase().includes(driveSearch.trim().toLowerCase())
+  ));
+  const selectedOfficer = allOfficerCards.find((officer) => officer.cardKey === selectedOfficerId);
+  const officerDrives = isMaker || !selectedOfficerId ? drives : (selectedOfficer?.drives || []);
+  const filteredDrives = officerDrives.filter((drive) => {
     const text = [
       drive.companyName,
       drive.jobRole,
@@ -1366,7 +1458,11 @@ function DriveWisePage({ user, initialTab = "drives" }) {
   async function load() {
     setLoading(true);
     try {
-      setDrives(await api("/drives"));
+      const drivesRequest = api("/drives");
+      const officersRequest = user.role === "HOD" ? api("/users") : Promise.resolve([]);
+      const [driveData, officerData] = await Promise.all([drivesRequest, officersRequest]);
+      setDrives(driveData);
+      setPlacementOfficers(officerData);
       setRequests(await api("/drives/access-requests/list"));
       if (user.role === "HOD") {
         const stuckOffReport = await api("/drives/reports/stuck-off");
@@ -1664,11 +1760,15 @@ function DriveWisePage({ user, initialTab = "drives" }) {
     <>
       <PageHeader 
         eyebrow="Drive Workflow" 
-        title={isMaker ? "Upload Drive Sheet" : "Drives & Reports"} 
-        subtitle={isMaker ? "Upload one attendance sheet; drives are created automatically from the Company column" : "Manage drives, approvals, and view analytics reports"} 
+        title={isMaker ? "Upload Drive Sheet" : selectedOfficer ? `${selectedOfficer.name}'s Drives` : "Drives & Reports"}
+        subtitle={isMaker
+          ? "Upload one attendance sheet; drives are created automatically from the Company column"
+          : selectedOfficer
+            ? `Review and manage all drives uploaded by ${selectedOfficer.name}.`
+            : "Select a placement officer to review their uploaded drives and activity"}
       />
 
-      {!isMaker && (
+      {!isMaker && !selectedOfficerId && (
         <section className="hod-tabs" style={{ display: "flex", gap: "10px", marginBottom: "20px", borderBottom: "1px solid var(--line)", paddingBottom: "10px" }}>
           <button className={activeTab === "drives" ? "tab-btn active" : "tab-btn soft"} onClick={() => setActiveTab("drives")}>Drives List</button>
           <button className={activeTab === "reports" ? "tab-btn active" : "tab-btn soft"} onClick={() => setActiveTab("reports")}>Attendance & Selection Reports</button>
@@ -1748,42 +1848,118 @@ function DriveWisePage({ user, initialTab = "drives" }) {
       {/* RENDER DRIVES TAB */}
       {(isMaker || activeTab === "drives") && (
         <>
-          <section className="drive-toolbar">
-            <label className="searchbox drive-search" aria-label="Search drives">
-              <Search size={18} />
-              <input value={driveSearch} onChange={(event) => setDriveSearch(event.target.value)} placeholder="Search drive by company, role, or package" />
-            </label>
-            {user.role === "HOD" && (
-              <>
-                <button className="soft" type="button" onClick={toggleAllFilteredDrives} disabled={!filteredDrives.length}>
-                  <CheckCircle2 size={17} /> {allFilteredSelected ? "Clear Selection" : "Select All"}
+          {!isMaker && !selectedOfficerId ? (
+            <>
+              <section className="drive-toolbar">
+                <label className="searchbox drive-search" aria-label="Search placement officers">
+                  <Search size={18} />
+                  <input value={driveSearch} onChange={(event) => setDriveSearch(event.target.value)} placeholder="Search placement officer by name or email" />
+                </label>
+                <button className="soft" onClick={load} disabled={loading}><RefreshCcw size={17} /> Refresh Officers</button>
+              </section>
+              <div className="officer-directory-head">
+                <div>
+                  <span className="officer-directory-icon"><UsersRound size={20} /></span>
+                  <div>
+                    <h3>Placement Officer Directory</h3>
+                    <p>Select an officer to view and manage their drives.</p>
+                  </div>
+                </div>
+                <div className="officer-directory-summary" aria-label={`${allOfficerCards.length} officers and ${drives.length} drives`}>
+                  <span><strong>{allOfficerCards.length}</strong> Officers</span>
+                  <span><strong>{drives.length}</strong> Total Drives</span>
+                </div>
+              </div>
+              <section className="officer-grid">
+                {officerCards.map((officer) => (
+                  <button
+                    className="officer-card"
+                    type="button"
+                    key={officer.cardKey}
+                    onClick={() => {
+                      setSelectedOfficerId(officer.cardKey);
+                      setDriveSearch("");
+                      setSelectedDriveIds([]);
+                    }}
+                  >
+                    <div className="officer-avatar">
+                      {officer.profileImage
+                        ? <img src={assetUrl(officer.profileImage)} alt={`${officer.name} profile`} />
+                        : <span>{(officer.name || "P").slice(0, 1).toUpperCase()}</span>}
+                    </div>
+                    <div className="officer-card-copy">
+                      <div className="officer-role-row">
+                        <span className="officer-label">{officer.designation || "Placement Officer"}</span>
+                        {officer.active === false && <span className="officer-inactive">Inactive</span>}
+                      </div>
+                      <h3>{officer.name || "Unnamed Officer"}</h3>
+                      <p>{officer.email || "Email not available"}</p>
+                      <div className="officer-drive-count">
+                        <BriefcaseBusiness size={18} />
+                        <strong>{officer.drives.length}</strong>
+                        <span>{officer.drives.length === 1 ? "drive uploaded" : "drives uploaded"}</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="officer-card-arrow" size={22} />
+                  </button>
+                ))}
+                {!loading && !placementOfficers.length && !drives.length && <EmptyState message="No placement officers found" />}
+                {!loading && (placementOfficers.length > 0 || drives.length > 0) && !officerCards.length && <EmptyState icon={Search} message="No matching placement officer found" />}
+              </section>
+            </>
+          ) : (
+            <>
+              {!isMaker && (
+                <button
+                  className="soft officer-back-button"
+                  type="button"
+                  onClick={() => {
+                    setSelectedOfficerId(null);
+                    setDriveSearch("");
+                    setSelectedDriveIds([]);
+                  }}
+                >
+                  <ChevronLeft size={18} /> Back to Placement Officers
                 </button>
-                <button className="soft danger-action" type="button" onClick={handleDeleteSelectedDrives} disabled={!selectedDriveIds.length}>
-                  <Trash2 size={17} /> Delete Selected ({selectedDriveIds.length})
-                </button>
-              </>
-            )}
-            <button className="soft" onClick={load}><RefreshCcw size={17} /> Refresh Drives</button>
-          </section>
-          <section className="drive-grid drive-list-grid">
-            {filteredDrives.map((drive) => (
-              <DriveCard
-                key={drive._id}
-                drive={drive}
-                user={user}
-                refresh={load}
-                requests={requests}
-                onDelete={user.role === "HOD" ? handleDeleteDrive : undefined}
-                selected={selectedDriveIds.includes(drive._id)}
-                onSelect={user.role === "HOD" ? (checked) => {
-                  setSelectedDriveIds((current) => checked ? Array.from(new Set([...current, drive._id])) : current.filter((id) => id !== drive._id));
-                } : undefined}
-              />
-            ))}
-            {!drives.length && <EmptyState message="No drives created yet" />}
-            {!!drives.length && !filteredDrives.length && <EmptyState icon={Search} message="No matching drive found" />}
-          </section>
-          {user.role === "HOD" && <StuckOffReport items={stuckOff} />}
+              )}
+              <section className="drive-toolbar">
+                <label className="searchbox drive-search" aria-label="Search drives">
+                  <Search size={18} />
+                  <input value={driveSearch} onChange={(event) => setDriveSearch(event.target.value)} placeholder="Search drive by company, role, or package" />
+                </label>
+                {user.role === "HOD" && (
+                  <>
+                    <button className="soft" type="button" onClick={toggleAllFilteredDrives} disabled={!filteredDrives.length}>
+                      <CheckCircle2 size={17} /> {allFilteredSelected ? "Clear Selection" : "Select All"}
+                    </button>
+                    <button className="soft danger-action" type="button" onClick={handleDeleteSelectedDrives} disabled={!selectedDriveIds.length}>
+                      <Trash2 size={17} /> Delete Selected ({selectedDriveIds.length})
+                    </button>
+                  </>
+                )}
+                <button className="soft" onClick={load}><RefreshCcw size={17} /> Refresh Drives</button>
+              </section>
+              <section className="drive-grid drive-list-grid">
+                {filteredDrives.map((drive) => (
+                  <DriveCard
+                    key={drive._id}
+                    drive={drive}
+                    user={user}
+                    refresh={load}
+                    requests={requests}
+                    onDelete={user.role === "HOD" ? handleDeleteDrive : undefined}
+                    selected={selectedDriveIds.includes(drive._id)}
+                    onSelect={user.role === "HOD" ? (checked) => {
+                      setSelectedDriveIds((current) => checked ? Array.from(new Set([...current, drive._id])) : current.filter((id) => id !== drive._id));
+                    } : undefined}
+                  />
+                ))}
+                {!officerDrives.length && <EmptyState message={isMaker ? "No drives created yet" : "This placement officer has not uploaded any drives yet"} />}
+                {!!officerDrives.length && !filteredDrives.length && <EmptyState icon={Search} message="No matching drive found" />}
+              </section>
+              {user.role === "HOD" && <StuckOffReport items={stuckOff} />}
+            </>
+          )}
         </>
       )}
 
@@ -2135,7 +2311,7 @@ function ToastMessage({ toast, onClose }) {
   );
 }
 
-function ConfirmDialog({ title, message, confirmLabel = "Confirm", onConfirm, onCancel, onDone, onError }) {
+function ConfirmDialog({ title, message, confirmLabel = "Confirm", cancelLabel = "Cancel", onConfirm, onCancel, onDone, onError }) {
   const [busy, setBusy] = useState(false);
 
   async function runConfirm() {
@@ -2152,13 +2328,16 @@ function ConfirmDialog({ title, message, confirmLabel = "Confirm", onConfirm, on
   }
 
   return createPortal(
-    <div className="app-dialog-overlay">
-      <div className="app-dialog">
-        <h3>{title}</h3>
-        <p>{message}</p>
+    <div className="app-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
+      <div className="app-dialog confirm-dialog">
+        <div className="confirm-dialog-icon" aria-hidden="true"><Trash2 size={22} /></div>
+        <div className="confirm-dialog-copy">
+          <h3 id="confirm-dialog-title">{title}</h3>
+          <p>{message}</p>
+        </div>
         <div className="app-dialog-actions">
-          <button className="soft" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
-          <button className="danger-action" type="button" onClick={runConfirm} disabled={busy}>{busy ? "Working..." : confirmLabel}</button>
+          <button className="soft" type="button" onClick={onCancel} disabled={busy}>{cancelLabel}</button>
+          <button className="danger-button" type="button" onClick={runConfirm} disabled={busy}>{busy ? "Please wait..." : confirmLabel}</button>
         </div>
       </div>
     </div>,
@@ -3083,22 +3262,35 @@ function StudentRequestsPage() {
 
 function ProfilePage({ user }) {
   const { updateProfile, uploadProfilePhoto } = useAuth();
-  const [form, setForm] = useState({ name: user.name || "", email: user.email || "", personalEmail: user.personalEmail || "", phone: user.phone || "", profileImage: user.profileImage || "" });
+  const [form, setForm] = useState({ name: user.name || "", designation: user.designation || "", email: user.email || "", personalEmail: user.personalEmail || "", phone: user.phone || "", profileImage: user.profileImage || "" });
   const [message, setMessage] = useState("");
+  const [cropPhoto, setCropPhoto] = useState(null);
 
   async function saveProfile(event) {
     event.preventDefault();
     const updated = await updateProfile(form);
-    setForm({ name: updated.name || "", email: updated.email || "", personalEmail: updated.personalEmail || "", phone: updated.phone || "", profileImage: updated.profileImage || "" });
+    setForm({ name: updated.name || "", designation: updated.designation || "", email: updated.email || "", personalEmail: updated.personalEmail || "", phone: updated.phone || "", profileImage: updated.profileImage || "" });
     setMessage("Profile updated successfully");
   }
 
-  async function changePhoto(event) {
+  function changePhoto(event) {
     const file = event.target.files?.[0];
     if (!file) return;
+    setMessage("");
+    setCropPhoto({ file, url: URL.createObjectURL(file) });
+    event.target.value = "";
+  }
+
+  function closeCropPhoto() {
+    if (cropPhoto?.url) URL.revokeObjectURL(cropPhoto.url);
+    setCropPhoto(null);
+  }
+
+  async function uploadCroppedPhoto(file) {
     const updated = await uploadProfilePhoto(file);
     setForm((current) => ({ ...current, profileImage: updated.profileImage || "" }));
-    setMessage("Profile photo uploaded successfully");
+    setMessage("Profile photo cropped and uploaded successfully");
+    closeCropPhoto();
   }
 
   return (
@@ -3113,25 +3305,163 @@ function ProfilePage({ user }) {
           <div className="profile-summary">
             <div>
               <h3>{form.name || "User Profile"}</h3>
-              <span>{user.role === "HOD" ? "Administration Profile" : "Placement Officer Profile"}</span>
+              <span>{form.designation || (user.role === "HOD" ? "Administration" : "Placement Officer")}</span>
             </div>
             <p>{form.email}</p>
           </div>
-          <label className="upload-photo-button">Upload Photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={changePhoto} /></label>
+          <label className="upload-photo-button"><Crop size={16} /> Upload & Crop Photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={changePhoto} /></label>
         </div>
         <form className="profile-form" onSubmit={saveProfile}>
           <div className="profile-form-heading">
             <h3>Profile Information</h3>
             <p>Keep your account details updated for dashboard and report access.</p>
           </div>
-          <label className="full-span">Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
+          <label>Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
+          <label>Professional Role / Designation<input value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })} placeholder="e.g. Placement Officer or Assistant Professor" maxLength={80} /></label>
           <label>Official Email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></label>
           <label>Personal Email<input type="email" value={form.personalEmail} onChange={(e) => setForm({ ...form, personalEmail: e.target.value })} /></label>
           <label>Phone Number<input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Add phone number" /></label>
           <button><Save size={17} /> Save Profile</button>
         </form>
       </section>
+      {cropPhoto && (
+        <ProfilePhotoCropper
+          source={cropPhoto}
+          onCancel={closeCropPhoto}
+          onUpload={uploadCroppedPhoto}
+        />
+      )}
     </>
+  );
+}
+
+function ProfilePhotoCropper({ source, onCancel, onUpload }) {
+  const [dimensions, setDimensions] = useState(null);
+  const [zoom, setZoom] = useState(1);
+  const [positionX, setPositionX] = useState(0);
+  const [positionY, setPositionY] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const previewSize = Math.min(320, Math.max(220, window.innerWidth - 62));
+
+  const placement = useMemo(() => {
+    if (!dimensions) return null;
+    const baseScale = Math.max(previewSize / dimensions.width, previewSize / dimensions.height);
+    const scale = baseScale * zoom;
+    const width = dimensions.width * scale;
+    const height = dimensions.height * scale;
+    const maxX = Math.max(0, (width - previewSize) / 2);
+    const maxY = Math.max(0, (height - previewSize) / 2);
+    return {
+      width,
+      height,
+      left: (previewSize - width) / 2 + (positionX / 100) * maxX,
+      top: (previewSize - height) / 2 + (positionY / 100) * maxY
+    };
+  }, [dimensions, zoom, positionX, positionY]);
+
+  function resetCrop() {
+    setZoom(1);
+    setPositionX(0);
+    setPositionY(0);
+  }
+
+  async function cropAndUpload() {
+    if (!dimensions) return;
+    setSaving(true);
+    setError("");
+    try {
+      const outputSize = 512;
+      const canvas = document.createElement("canvas");
+      canvas.width = outputSize;
+      canvas.height = outputSize;
+      const context = canvas.getContext("2d");
+      const image = new Image();
+      image.src = source.url;
+      await image.decode();
+
+      const baseScale = Math.max(outputSize / image.naturalWidth, outputSize / image.naturalHeight);
+      const scale = baseScale * zoom;
+      const width = image.naturalWidth * scale;
+      const height = image.naturalHeight * scale;
+      const maxX = Math.max(0, (width - outputSize) / 2);
+      const maxY = Math.max(0, (height - outputSize) / 2);
+      const left = (outputSize - width) / 2 + (positionX / 100) * maxX;
+      const top = (outputSize - height) / 2 + (positionY / 100) * maxY;
+
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = "high";
+      context.drawImage(image, left, top, width, height);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+      if (!blob) throw new Error("Unable to prepare the cropped image.");
+      const baseName = source.file.name.replace(/\.[^.]+$/, "") || "profile-photo";
+      await onUpload(new File([blob], `${baseName}-cropped.jpg`, { type: "image/jpeg" }));
+    } catch (cropError) {
+      setError(cropError.message || "Unable to crop and upload this photo.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return createPortal(
+    <div className="app-dialog-overlay photo-crop-overlay" role="dialog" aria-modal="true" aria-labelledby="photo-crop-title">
+      <div className="app-dialog photo-crop-dialog">
+        <div className="photo-crop-heading">
+          <div>
+            <span className="eyebrow">Profile photo</span>
+            <h3 id="photo-crop-title"><Crop size={20} /> Crop and position</h3>
+            <p>Center your face inside the circle. The final image will be saved as a high-quality square.</p>
+          </div>
+          <button className="icon-soft" type="button" onClick={onCancel} aria-label="Close photo cropper"><X size={18} /></button>
+        </div>
+
+        <div className="photo-crop-content">
+          <div className="photo-crop-stage" style={{ width: previewSize, height: previewSize }}>
+            <img
+              src={source.url}
+              alt="Crop preview"
+              draggable="false"
+              onLoad={(event) => setDimensions({
+                width: event.currentTarget.naturalWidth,
+                height: event.currentTarget.naturalHeight
+              })}
+              style={placement ? {
+                width: placement.width,
+                height: placement.height,
+                left: placement.left,
+                top: placement.top
+              } : undefined}
+            />
+            <span className="photo-crop-guide" aria-hidden="true" />
+          </div>
+
+          <div className="photo-crop-controls">
+            <label>
+              <span><ZoomIn size={17} /> Zoom <strong>{Math.round(zoom * 100)}%</strong></span>
+              <input type="range" min="1" max="3" step="0.01" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} />
+            </label>
+            <label>
+              <span><MoveHorizontal size={17} /> Horizontal position</span>
+              <input type="range" min="-100" max="100" step="1" value={positionX} onChange={(event) => setPositionX(Number(event.target.value))} />
+            </label>
+            <label>
+              <span><MoveVertical size={17} /> Vertical position</span>
+              <input type="range" min="-100" max="100" step="1" value={positionY} onChange={(event) => setPositionY(Number(event.target.value))} />
+            </label>
+            <button className="soft photo-crop-reset" type="button" onClick={resetCrop}><RefreshCcw size={16} /> Reset crop</button>
+          </div>
+        </div>
+
+        {error && <div className="notice error compact-notice">{error}</div>}
+        <div className="app-dialog-actions photo-crop-actions">
+          <button className="soft" type="button" onClick={onCancel} disabled={saving}>Cancel</button>
+          <button type="button" onClick={cropAndUpload} disabled={saving || !dimensions}>
+            <Crop size={17} /> {saving ? "Uploading..." : "Crop & Upload"}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 

@@ -1603,7 +1603,7 @@ router.use(requireAuth);
 
 router.get("/", async (req, res) => {
   const filter = req.user.role === "HOD" ? {} : { createdBy: req.user._id };
-  const drives = await Drive.find(filter).populate("createdBy", "name email").sort({ updatedAt: -1 }).lean();
+  const drives = await Drive.find(filter).populate("createdBy", "name email designation profileImage active").sort({ updatedAt: -1 }).lean();
   const driveIds = drives.map((drive) => drive._id);
   const stats = await DriveStudent.aggregate([
     { $match: { drive: { $in: driveIds } } },

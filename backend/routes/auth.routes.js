@@ -130,7 +130,7 @@ router.post("/login", async (req, res) => {
 
   res.json({
     token: signToken(user, sessionId),
-    user: { id: user._id, name: user.name, email: user.email, role: user.role, profileImage: user.profileImage, personalEmail: user.personalEmail, phone: user.phone }
+    user: { id: user._id, name: user.name, email: user.email, role: user.role, designation: user.designation, profileImage: user.profileImage, personalEmail: user.personalEmail, phone: user.phone }
   });
 });
 
@@ -143,7 +143,7 @@ router.post("/logout", requireAuth, async (req, res) => {
 });
 
 router.get("/me", requireAuth, (req, res) => {
-  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, phone: req.user.phone });
+  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, designation: req.user.designation, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, phone: req.user.phone });
 });
 
 router.patch("/me", requireAuth, async (req, res) => {
@@ -151,6 +151,7 @@ router.patch("/me", requireAuth, async (req, res) => {
     name: z.string().min(2).max(80),
     email: z.string().email(),
     profileImage: z.string().max(300).optional().or(z.literal("")),
+    designation: z.string().trim().min(2).max(80).optional().or(z.literal("")),
     personalEmail: z.string().email().optional().or(z.literal("")),
     phone: z.string().max(20).optional().or(z.literal(""))
   }).safeParse(req.body);
@@ -159,11 +160,12 @@ router.patch("/me", requireAuth, async (req, res) => {
   req.user.name = parsed.data.name;
   req.user.email = parsed.data.email.toLowerCase();
   req.user.profileImage = parsed.data.profileImage || undefined;
+  req.user.designation = parsed.data.designation || undefined;
   req.user.personalEmail = parsed.data.personalEmail || undefined;
   req.user.phone = parsed.data.phone || undefined;
   await req.user.save();
   await writeAudit({ actor: req.user._id, action: "PROFILE_UPDATED", entity: "User", entityId: req.user._id });
-  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, phone: req.user.phone });
+  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, designation: req.user.designation, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, phone: req.user.phone });
 });
 
 router.post("/me/photo", requireAuth, upload.single("photo"), async (req, res) => {
@@ -178,7 +180,7 @@ router.post("/me/photo", requireAuth, upload.single("photo"), async (req, res) =
   }
   await req.user.save();
   await writeAudit({ actor: req.user._id, action: "PROFILE_PHOTO_UPDATED", entity: "User", entityId: req.user._id, metadata: { uploadProvider } });
-  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, phone: req.user.phone, uploadProvider });
+  res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, designation: req.user.designation, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, phone: req.user.phone, uploadProvider });
 });
 
 export default router;
