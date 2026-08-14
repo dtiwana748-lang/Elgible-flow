@@ -9,6 +9,9 @@ import { DriveRound } from "../models/DriveRound.js";
 import { DriveStudent } from "../models/DriveStudent.js";
 import { Student } from "../models/Student.js";
 import { AttendanceSheet } from "../models/AttendanceSheet.js";
+import { PlacementRecord } from "../models/PlacementRecord.js";
+import { PlacementEditRequest } from "../models/PlacementEditRequest.js";
+import { TargetPlanner } from "../models/TargetPlanner.js";
 import { writeAudit } from "../utils/audit.js";
 import { AccessRequest } from "../models/AccessRequest.js";
 import { calculateDriveAttendance } from "../utils/driveAttendance.js";
@@ -18,6 +21,527 @@ import mongoose from "mongoose";
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const STUCK_OFF_ABSENCE_THRESHOLD = 3;
+
+const plannerColumnLayouts = {
+  "2026": [
+    "ron", "placementOfficer", "companyCategory", "leadBy", "companyName", "jobProfile", "packageText", "branch", "mode",
+    "dateFloated", "dateOfDrive", "batch", "totalEligible", "totalRegistered", "dataShared", "round1Date", "round2Date",
+    "shortlistedDate", "finalSelectionDate", "actualStatus", "resultSharedBackend", "remarks"
+  ],
+  "2027": [
+    "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "companyName", "jobProfile", "packageText", "branch",
+    "mode", "batch", "totalEligible", "totalRegistered", "dateSharedWithHr", "dataShared", "round1Date", "round2Date",
+    "shortlistedDate", "selections", "actualStatus", "resultSharedBackend", "remarks"
+  ],
+  "2028": [
+    "ron", "placementOfficer", "companyCategory", "leadBy", "companyName", "jobProfile", "packageText", "branch", "mode",
+    "dateFloated", "dateOfDrive", "batch", "totalEligible", "totalRegistered", "dataShared", "round1Date", "round2Date",
+    "shortlistedDate", "finalSelectionDate", "actualStatus", "resultSharedBackend", "remarks"
+  ],
+  "2029": [
+    "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "companyName", "jobProfile", "packageText", "branch",
+    "mode", "dateOfDrive", "batch", "totalEligible", "totalRegistered", "dataShared", "round1Date", "round2Date",
+    "shortlistedDate", "finalSelectionDate", "actualStatus", "resultSharedBackend", "remarks"
+  ]
+};
+
+const plannerBatchYear = value => {
+  const matches = String(value || "").match(/20\d{2}/g) || [];
+  return matches[matches.length - 1] || "";
+};
+const plannerLayoutValue = (row, field, batchHint = "") => {
+  const entries = Object.entries(row).filter(([key]) => !String(key).startsWith("__"));
+  const batchYear = plannerBatchYear(batchHint) || plannerBatchYear(entries.map(([, value]) => value).join(" "));
+  const layout = plannerColumnLayouts[batchYear];
+  if (!layout) return "";
+  const startIndex = entries.findIndex(([key]) => ["sr", "ron", "sno", "srno", "serial", "serialno"].includes(normalizeHeader(key)));
+  const fieldIndex = layout.indexOf(field);
+  if (fieldIndex < 0) return "";
+  const entry = entries[(startIndex >= 0 ? startIndex : 0) + fieldIndex];
+  return entry?.[1] ?? "";
+};
+
+const plannerValue = (row, aliases, field = "", batchHint = "") => {
+  const plannerKey = value => normalizeHeader(value).replace(/20\d{2}/g, "");
+  const wanted = aliases.map(plannerKey);
+  const entries = Object.entries(row);
+  const entry = entries.find(([key]) => wanted.includes(plannerKey(key)))
+    || entries.find(([key]) => {
+      const header = plannerKey(key);
+      return header && wanted.some(alias => header.includes(alias) || (header.length >= 3 && alias.includes(header)));
+    });
+  return entry?.[1] ?? plannerLayoutValue(row, field, batchHint);
+};
+const plannerRowsFromSheet = sheet => {
+  const matrix = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
+  const headerRowIndex = matrix.findIndex(row => {
+    const keys = row.map(normalizeHeader).filter(Boolean);
+    const joined = keys.join(" ");
+    return keys.some(key => key.includes("company")) && (
+      joined.includes("placement") ||
+      joined.includes("job") ||
+      joined.includes("profile") ||
+      joined.includes("package") ||
+      joined.includes("status")
+    );
+  });
+  if (headerRowIndex < 0) return xlsx.utils.sheet_to_json(sheet, { defval: "", raw: true });
+  const headers = matrix[headerRowIndex].map((header, index) => String(header || `Column ${index + 1}`).trim() || `Column ${index + 1}`);
+  return matrix.slice(headerRowIndex + 1).map((row, rowIndex) => {
+    const record = headers.reduce((next, header, index) => {
+      next[header] = row[index] ?? "";
+      return next;
+    }, {});
+    record.__sourceRow = headerRowIndex + rowIndex + 2;
+    return record;
+  }).filter(row => Object.entries(row).some(([key, value]) => key !== "__sourceRow" && String(value ?? "").trim()));
+};
+const plannerNumber = value => {
+  const match = String(value ?? "").replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+};
+const plannerPackageLpa = value => {
+  const number = plannerNumber(value);
+  if (!number) return 0;
+  if (number > 100000) return Number((number / 100000).toFixed(2));
+  if (number > 1000) return Number((number / 100000).toFixed(2));
+  return number;
+};
+const plannerDate = value => {
+  if (!value) return undefined;
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : undefined;
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const excelDate = new Date(Math.round((value - 25569) * 86400 * 1000));
+    return Number.isFinite(excelDate.getTime()) ? excelDate : undefined;
+  }
+  const text = String(value).trim();
+  if (!text) return undefined;
+  const serial = Number(text);
+  if (Number.isFinite(serial) && serial > 20000 && serial < 80000) {
+    const sheetDate = new Date(Math.round((serial - 25569) * 86400 * 1000));
+    return Number.isFinite(sheetDate.getTime()) ? sheetDate : undefined;
+  }
+  const numeric = text.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (numeric) {
+    const first = Number(numeric[1]);
+    const second = Number(numeric[2]);
+    const fullYear = Number(numeric[3].length === 2 ? `20${numeric[3]}` : numeric[3]);
+    const day = first > 12 ? first : second > 12 ? second : first;
+    const month = first > 12 ? second : second > 12 ? first : second;
+    const parsed = new Date(Date.UTC(fullYear, month - 1, day));
+    return Number.isFinite(parsed.getTime()) ? parsed : undefined;
+  }
+  const date = new Date(text);
+  return Number.isFinite(date.getTime()) ? date : undefined;
+};
+const academicYearFor = (value, fallback) => {
+  if (fallback && /^\d{4}-\d{4}$/.test(fallback)) return fallback;
+  const date = plannerDate(value) || new Date();
+  const year = date.getFullYear();
+  return date.getMonth() >= 6 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
+};
+
+const plannerSheetId = sheetUrl => String(sheetUrl || "").match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/)?.[1] || "";
+const plannerSheetHasGid = sheetUrl => /[?&#]gid=\d+/.test(String(sheetUrl || ""));
+const plannerSheetGid = sheetUrl => String(sheetUrl || "").match(/[?&#]gid=(\d+)/)?.[1] || "0";
+const plannerSheetCsvUrl = sheetUrl => {
+  const sheetId = plannerSheetId(sheetUrl);
+  if (!sheetId) return "";
+  return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=${plannerSheetGid(sheetUrl)}`;
+};
+const plannerFieldAliases = {
+  ron: ["RON", "Sr", "S No", "Sr No", "Serial", "Serial No"],
+  placementOfficer: ["Placement Officer Name", "Placement Officer", "Officer", "PO", "Coordinator"],
+  companyCategory: ["COMPANY CATEGORY 2026", "COMPANY CATEGORY 2027", "Company Category", "Category", "Domain", "Type"],
+  leadBy: ["Lead By", "Lead", "Led By", "Owner"],
+  dateFloated: ["Date of Floated", "Floated Date", "Date Floated", "Opening Date"],
+  dateOfDrive: ["Date of Drive", "Drive Date", "Campus Drive Date", "Interview Date"],
+  companyName: ["Company Name", "Company", "Employer", "Organisation", "Organization"],
+  jobProfile: ["Job Profile", "Job Role", "Role", "Profile", "Designation"],
+  packageText: ["Package", "CTC", "Package CTC", "Salary", "Stipend"],
+  branch: ["Branch", "Branches", "Department", "Stream"],
+  mode: ["Mode (On Campus/ Online/Off Campus)", "Mode", "Drive Mode", "Campus Mode"],
+  batch: ["Batch", "Passing Batch", "Academic Batch", "Year"],
+  totalEligible: ["Total Eligible", "Eligible", "Eligibility Count"],
+  totalRegistered: ["Total Reg Count", "Total Registered", "Registered", "Registration Count"],
+  dateSharedWithHr: ["Date Shared With HR", "Shared With HR", "HR Shared Date"],
+  dataShared: ["Data Shared Yes / No", "Data Shared Yes/No", "Data Shared", "Shared"],
+  round1Date: ["Round 1 Date", "Round 1", "R1 Date", "First Round Date"],
+  round2Date: ["Round 2 (if Any) Date", "Round 2 Date", "Round 2", "R2 Date", "Second Round Date"],
+  shortlistedDate: ["Shortlisted Date", "Shortlist Date", "Shortlisted"],
+  finalSelectionDate: ["Final Selection Date", "Final Selection", "Final Select Date"],
+  selections: ["No. of Selections", "No of Selections", "Selection Count", "Selections Count", "Selections", "Selected", "Offers"],
+  actualStatus: ["Actual Status", "Status", "Current Status", "Drive Status"],
+  resultSharedBackend: ["Result to be Share With Backend Yes/ No", "Result to be Share With Backend Yes/No", "Result Shared With Backend", "Backend Result"],
+  remarks: ["Remarks", "Remark", "Notes", "Comments"]
+};
+const plannerSheetValue = value => value instanceof Date ? value.toISOString().slice(0, 10) : value;
+async function triggerPlannerSheetUpdate(record, updates = {}) {
+  const appsScriptUrl = record?.plannerAppsScriptUrl;
+  if (!appsScriptUrl || !record?.sourceRow) return { ok: false, skipped: true, message: "No writable Google Sheet script is linked." };
+  const data = {};
+  const aliases = {};
+  Object.entries(updates).forEach(([field, value]) => {
+    if (plannerFieldAliases[field]) {
+      data[field] = plannerSheetValue(value);
+      aliases[field] = plannerFieldAliases[field];
+    }
+  });
+  if (!Object.keys(data).length) return { ok: false, skipped: true, message: "No planner sheet columns need write-back." };
+  const response = await fetch(appsScriptUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "plannerUpdate",
+      rowNumber: record.sourceRow,
+      sheetGid: record.sourceSheetGid || "",
+      sheetName: record.sourceFile || "",
+      expectedBatch: record.batch || "",
+      expectedRon: record.ron || "",
+      expectedCompanyName: record.companyName || "",
+      aliases,
+      data
+    })
+  });
+  if (!response.ok) return { ok: false, skipped: false, message: `Google Sheet write-back returned HTTP ${response.status}.` };
+  const responseData = await response.json().catch(() => ({}));
+  if (responseData?.ok === false) return { ok: false, skipped: false, message: responseData.message || "Google Sheet write-back was rejected.", data: responseData };
+  return { ok: true, skipped: false, data: responseData };
+}
+
+function buildPlannerRecords(rows, { academicYear = "", sourceFile = "planner-sheet", uploadedBy, batchOverride = "", sourceSheetUrl = "", plannerAppsScriptUrl = "" }) {
+  const year = String(academicYear || "").trim();
+  const forcedBatch = String(batchOverride || "").trim();
+  const sourceSheetId = plannerSheetId(sourceSheetUrl);
+  const sourceSheetGid = plannerSheetGid(sourceSheetUrl);
+  return rows.map((row, index) => {
+    const sheetBatch = String(plannerValue(row, plannerFieldAliases.batch, "batch", sourceFile || year)).trim();
+    const batchHint = forcedBatch || sheetBatch || sourceFile || year;
+    const dateFloated = plannerDate(plannerValue(row, plannerFieldAliases.dateFloated, "dateFloated", batchHint));
+    const dateOfDrive = plannerDate(plannerValue(row, plannerFieldAliases.dateOfDrive, "dateOfDrive", batchHint));
+    const packageText = String(plannerValue(row, plannerFieldAliases.packageText, "packageText", batchHint));
+    const placementOfficer = String(plannerValue(row, plannerFieldAliases.placementOfficer, "placementOfficer", batchHint)).trim();
+    const leadBy = String(plannerValue(row, plannerFieldAliases.leadBy, "leadBy", batchHint)).trim() || placementOfficer;
+    return {
+      academicYear: academicYearFor(dateFloated || dateOfDrive, year), ron: String(plannerValue(row, plannerFieldAliases.ron, "ron", batchHint)),
+      placementOfficer,
+      companyCategory: String(plannerValue(row, plannerFieldAliases.companyCategory, "companyCategory", batchHint)),
+      leadBy, dateFloated, dateOfDrive,
+      companyName: String(plannerValue(row, plannerFieldAliases.companyName, "companyName", batchHint)).trim(),
+      jobProfile: String(plannerValue(row, plannerFieldAliases.jobProfile, "jobProfile", batchHint)), packageText, packageLpa: plannerPackageLpa(packageText),
+      branch: String(plannerValue(row, plannerFieldAliases.branch, "branch", batchHint)), mode: String(plannerValue(row, plannerFieldAliases.mode, "mode", batchHint)),
+      batch: forcedBatch || sheetBatch, totalEligible: plannerNumber(plannerValue(row, plannerFieldAliases.totalEligible, "totalEligible", batchHint)),
+      totalRegistered: plannerNumber(plannerValue(row, plannerFieldAliases.totalRegistered, "totalRegistered", batchHint)),
+      dateSharedWithHr: plannerDate(plannerValue(row, plannerFieldAliases.dateSharedWithHr, "dateSharedWithHr", batchHint)), dataShared: String(plannerValue(row, plannerFieldAliases.dataShared, "dataShared", batchHint)),
+      round1Date: plannerDate(plannerValue(row, plannerFieldAliases.round1Date, "round1Date", batchHint)), round2Date: plannerDate(plannerValue(row, plannerFieldAliases.round2Date, "round2Date", batchHint)),
+      shortlistedDate: plannerDate(plannerValue(row, plannerFieldAliases.shortlistedDate, "shortlistedDate", batchHint)), finalSelectionDate: plannerDate(plannerValue(row, plannerFieldAliases.finalSelectionDate, "finalSelectionDate", batchHint)), selections: plannerNumber(plannerValue(row, plannerFieldAliases.selections, "selections", batchHint)),
+      actualStatus: String(plannerValue(row, plannerFieldAliases.actualStatus, "actualStatus", batchHint)), resultSharedBackend: String(plannerValue(row, plannerFieldAliases.resultSharedBackend, "resultSharedBackend", batchHint)),
+      remarks: String(plannerValue(row, plannerFieldAliases.remarks, "remarks", batchHint)), sourceFile, sourceSheetUrl, sourceSheetId, sourceSheetGid, plannerAppsScriptUrl, sourceRow: row.__sourceRow || index + 2, uploadedBy, raw: row
+    };
+  }).filter(record => record.companyName);
+}
+
+router.post("/planner/import", requireAuth, requireRole("HOD"), upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: "Planner CSV or Excel file is required" });
+    const workbook = xlsx.read(req.file.buffer, { type: "buffer", cellDates: true });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = plannerRowsFromSheet(sheet);
+    const sourceFile = String(req.body.sheetName || "").trim() || req.file.originalname;
+    const records = buildPlannerRecords(rows, { academicYear: req.body.academicYear, sourceFile, uploadedBy: req.user._id, batchOverride: req.body.batch });
+    if (!records.length) return res.status(400).json({ message: "No Company Name rows were found. Please use the supplied planner headings." });
+    if (req.body.replaceYear === "true") await PlacementRecord.deleteMany({ academicYear: records[0].academicYear, ...(req.body.batch ? { batch: req.body.batch } : {}) });
+    await PlacementRecord.insertMany(records);
+    res.status(201).json({ message: `${records.length} placement records imported`, count: records.length, academicYear: records[0].academicYear });
+  } catch (error) { res.status(400).json({ message: error.message || "Planner import failed" }); }
+});
+
+router.post("/planner/preview", requireAuth, requireRole("HOD"), upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: "Planner CSV or Excel file is required" });
+    const workbook = xlsx.read(req.file.buffer, { type: "buffer", cellDates: true });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const rows = plannerRowsFromSheet(sheet);
+    const columns = Object.keys(rows[0] || {});
+    res.json({
+      fileName: req.file.originalname,
+      sheetName,
+      rowCount: rows.length,
+      columns,
+      rows: rows.slice(0, 50)
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Planner preview failed" });
+  }
+});
+
+router.post("/planner/preview-url", requireAuth, requireRole("HOD"), async (req, res) => {
+  try {
+    const sheetUrl = String(req.body.sheetUrl || "").trim();
+    const csvUrl = plannerSheetCsvUrl(sheetUrl);
+    if (!csvUrl) return res.status(400).json({ message: "Valid Google Sheet URL is required" });
+    if (!plannerSheetHasGid(sheetUrl)) return res.status(400).json({ message: "Open the exact batch tab in Google Sheets and paste that tab URL with gid=." });
+    const response = await fetch(csvUrl);
+    if (!response.ok) return res.status(400).json({ message: "Unable to read this Google Sheet. Share it as Anyone with the link can view." });
+    const csvText = await response.text();
+    const workbook = xlsx.read(csvText, { type: "string", cellDates: true });
+    const sheetName = workbook.SheetNames[0];
+    const rows = plannerRowsFromSheet(workbook.Sheets[sheetName]);
+    const columns = Object.keys(rows[0] || {}).filter(column => column !== "__sourceRow");
+    res.json({ fileName: "Linked Google Sheet", sheetName, rowCount: rows.length, columns, rows: rows.slice(0, 50) });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Planner link preview failed" });
+  }
+});
+
+router.post("/planner/import-url", requireAuth, requireRole("HOD"), async (req, res) => {
+  try {
+    const sheetUrl = String(req.body.sheetUrl || "").trim();
+    const csvUrl = plannerSheetCsvUrl(sheetUrl);
+    if (!csvUrl) return res.status(400).json({ message: "Valid Google Sheet URL is required" });
+    if (!plannerSheetHasGid(sheetUrl)) return res.status(400).json({ message: "Open the exact batch tab in Google Sheets and paste that tab URL with gid=." });
+    const response = await fetch(csvUrl);
+    if (!response.ok) return res.status(400).json({ message: "Unable to read this Google Sheet. Make sure it is accessible by link." });
+    const csvText = await response.text();
+    const workbook = xlsx.read(csvText, { type: "string", cellDates: true });
+    const rows = plannerRowsFromSheet(workbook.Sheets[workbook.SheetNames[0]]);
+    const sourceFile = String(req.body.sheetName || "").trim() || sheetUrl;
+    const records = buildPlannerRecords(rows, {
+      academicYear: req.body.academicYear,
+      sourceFile,
+      sourceSheetUrl: sheetUrl,
+      plannerAppsScriptUrl: String(req.body.appsScriptUrl || "").trim(),
+      uploadedBy: req.user._id,
+      batchOverride: req.body.batch
+    });
+    if (!records.length) return res.status(400).json({ message: "No Company Name rows were found. Please use the supplied planner headings." });
+    if (req.body.replaceYear === "true") await PlacementRecord.deleteMany({ academicYear: records[0].academicYear, ...(req.body.batch ? { batch: req.body.batch } : {}) });
+    else await PlacementRecord.deleteMany({ sourceSheetUrl: sheetUrl });
+    await PlacementRecord.insertMany(records);
+    res.status(201).json({ message: `${records.length} placement records linked from Google Sheet`, count: records.length, academicYear: records[0].academicYear });
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Planner Google Sheet import failed" });
+  }
+});
+
+router.delete("/planner/records", requireAuth, requireRole("HOD"), async (req, res) => {
+  const academicYear = String(req.query.academicYear || "").trim();
+  if (!academicYear) return res.status(400).json({ message: "academicYear is required" });
+  const batch = String(req.query.batch || "").trim();
+  const result = await PlacementRecord.deleteMany({ academicYear, ...(batch ? { batch } : {}) });
+  res.json({ message: `${result.deletedCount} planner rows removed for ${batch ? `${batch} in ` : ""}${academicYear}`, deletedCount: result.deletedCount });
+});
+
+router.delete("/planner/source", requireAuth, requireRole("HOD"), async (req, res) => {
+  const sourceFile = String(req.query.sourceFile || "").trim();
+  const academicYear = String(req.query.academicYear || "").trim();
+  if (!sourceFile) return res.status(400).json({ message: "sourceFile is required" });
+  const result = await PlacementRecord.deleteMany({ sourceFile, ...(academicYear ? { academicYear } : {}) });
+  res.json({ message: `${result.deletedCount} rows removed from ${sourceFile}.`, deletedCount: result.deletedCount });
+});
+
+router.get("/planner/report", requireAuth, async (req, res) => {
+  const years = await PlacementRecord.distinct("academicYear");
+  const sortedYears = years.map(String).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  const academicYear = String(req.query.academicYear || sortedYears[0] || "");
+  const filter = academicYear ? { academicYear } : {};
+  const designation = String(req.user.designation || "").toLowerCase();
+  const normalizePerson = value => {
+    const cleaned = String(value || "").trim().toLowerCase().replace(/\./g, "").replace(/\s+/g, " ");
+    if (!cleaned) return "";
+    if (cleaned.includes("jagdeep")) return "jagdeep";
+    if (cleaned.includes("drashti") || cleaned.includes("drashti shamra") || cleaned.includes("drashti sharma")) return "drashti";
+    if (cleaned.includes("garima") || cleaned.includes("gramia")) return "garima";
+    if (cleaned.includes("abhilasha") || cleaned.includes("abhilasa")) return "abhilasha";
+    if (cleaned.includes("evp") || cleaned.includes("sushil") || cleaned.includes("parashar") || cleaned.includes("prashar")) return "sushil parashar";
+    if (cleaned.includes("avleen") || cleaned.includes("avaleen")) return "avleen kaur";
+    if (cleaned.includes("manish")) return "manish";
+    const aliases = {
+      "manish sir": "manish",
+      "mr manish": "manish",
+      "avleen mam": "avleen kaur",
+      "avleen maam": "avleen kaur",
+      "evp sir": "sushil parashar",
+      "mr sushil parashar": "sushil parashar"
+    };
+    return aliases[cleaned] || cleaned.replace(/^mr\s+/, "");
+  };
+  if (req.user.role !== "HOD") {
+    const canonicalName = normalizePerson(req.user.name);
+    const aliasMap = {
+      jagdeep: ["Jagdeep", "Jagdeep Sharma", "Jagdeep Sharma sir", "Jagdeep Sharma Sir", "Jagdeep Sharma ji", "Jagdeep Sharma jii", "Jagdeep Sharma Jii"],
+      drashti: ["Drashti", "Drashti Sharma", "Drashti Shamra", "Drashti sharma", "Drashti shamra"],
+      garima: ["Garima", "Gramia", "Garima Sharma", "Garima Sareen", "Garima Saren", "Garima sareen", "Garima sharma"],
+      abhilasha: ["Abhilasha", "Abhilasha Mam", "Abhilasha mam", "Abhilasha Maam", "Abhilasha maam", "Abhilasha ma'am", "Abhilasha Ma'am", "Abhilasha Madam", "Abhilasha madam"],
+      manish: ["Manish sir", "Manish Sir", "Mr. Manish", "Manish"],
+      "avleen kaur": ["Avleen mam", "Avleen maam", "Avleen Mam", "Avleen Kaur", "Avale(en) mam", "Avale(en) Mam", "Avale(en) ma'am", "Avleen Mam Manish Sir"],
+      "sushil parashar": ["EVP Sir", "EVP sir", "EVP SIR", "Mr. Sushil Parashar", "Sushil Parashar", "Sushil Prashar", "Sushil prashahr"]
+    };
+    const names = aliasMap[canonicalName] || [req.user.name];
+    const nameRegex = { $in: names.map(name => new RegExp(`^${escapeRegex(name)}$`, "i")) };
+    if (designation.includes("outreach") || designation.includes("higher")) filter.leadBy = nameRegex;
+    else filter.placementOfficer = nameRegex;
+  }
+  const comparisonFilter = { ...filter };
+  delete comparisonFilter.academicYear;
+  const records = await PlacementRecord.find(filter).sort({ sourceSheetId: 1, sourceSheetGid: 1, sourceRow: 1, ron: 1, createdAt: 1 }).lean();
+  const comparisonRecords = await PlacementRecord.find(comparisonFilter).sort({ academicYear: -1, sourceSheetId: 1, sourceSheetGid: 1, sourceRow: 1, ron: 1, createdAt: 1 }).lean();
+  const summarize = list => {
+    const closed = list.filter(r => /closed|complete|selected/i.test(r.actualStatus || ""));
+    const inProcess = list.filter(r => /process|open|ongoing|pending|floated/i.test(r.actualStatus || ""));
+    return { floated: list.length, closed: closed.length, inProcess: inProcess.length, selections: list.reduce((sum, r) => sum + (r.selections || 0), 0), eligible: list.reduce((sum, r) => sum + (r.totalEligible || 0), 0), registered: list.reduce((sum, r) => sum + (r.totalRegistered || 0), 0), highestPackage: Math.max(0, ...list.map(r => r.packageLpa || 0)) };
+  };
+  const groupedComparison = field => comparisonRecords.reduce((map, record) => {
+    const name = record[field] || "Unassigned";
+    const key = normalizePerson(name) || name;
+    (map[key] ||= []).push(record);
+    return map;
+  }, {});
+  const group = field => {
+    const comparisonByName = groupedComparison(field);
+    return Object.values(records.reduce((map, record) => { const name = record[field] || "Unassigned"; (map[name] ||= { name, records: [] }).records.push(record); return map; }, {})).map(item => {
+      const key = normalizePerson(item.name) || item.name;
+      return { ...item, comparisonRecords: comparisonByName[key] || item.records, summary: summarize(item.records) };
+    });
+  };
+  const requestFilter = req.user.role === "HOD" ? {} : { requester: req.user._id };
+  const requests = await PlacementEditRequest.find(requestFilter).populate("record", "companyName jobProfile academicYear placementOfficer leadBy batch").populate("requester", "name designation").sort({ createdAt: -1 }).lean();
+  res.json({ academicYear, years: sortedYears, summary: summarize(records), officerReports: group("placementOfficer"), outreachReports: group("leadBy"), records, comparisonRecords, requests });
+});
+
+router.get("/planner/edit-requests/pending-count", requireAuth, requireRole("HOD"), async (req, res) => {
+  const count = await PlacementEditRequest.countDocuments({ status: "PENDING" });
+  res.json({ count });
+});
+
+router.get("/planner/targets", requireAuth, async (req, res) => {
+  try {
+    const { academicYear } = req.query;
+    if (!academicYear) return res.status(400).json({ message: "academicYear is required" });
+    const targets = await TargetPlanner.find({ academicYear }).lean();
+    res.json({ academicYear, targets });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Failed to fetch targets" });
+  }
+});
+
+router.post("/planner/targets", requireAuth, requireRole("HOD"), async (req, res) => {
+  try {
+    const { academicYear, memberName, quarter, targetData } = req.body;
+    if (!academicYear || !memberName || !quarter || !targetData) {
+      return res.status(400).json({ message: "academicYear, memberName, quarter, and targetData are required" });
+    }
+    
+    let planner = await TargetPlanner.findOne({ academicYear, outreachMember: memberName });
+    if (!planner) {
+      planner = new TargetPlanner({ academicYear, outreachMember: memberName, quarters: {} });
+    }
+    
+    if (!planner.quarters) {
+        planner.quarters = {};
+    }
+    
+    planner.quarters[quarter] = targetData;
+    
+    // Explicitly mark modified for nested object
+    planner.markModified("quarters");
+    await planner.save();
+    
+    res.json({ message: "Targets saved successfully", planner });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Failed to save targets" });
+  }
+});
+
+router.post("/planner/records/:id/edit-request", requireAuth, async (req, res) => {
+  if (req.user.role === "HOD") return res.status(400).json({ message: "Head can manage records directly" });
+  const reason = String(req.body.reason || "").trim();
+  const field = String(req.body.field || "").trim();
+  const requestedValue = String(req.body.requestedValue || "").trim();
+  const currentValue = String(req.body.currentValue || "").trim();
+  if (reason.length < 5) return res.status(400).json({ message: "Describe the required correction" });
+  if (!field) return res.status(400).json({ message: "Select the field that needs correction" });
+  const record = await PlacementRecord.findById(req.params.id);
+  if (!record) return res.status(404).json({ message: "Placement record not found" });
+  const request = await PlacementEditRequest.create({ record: record._id, requester: req.user._id, field, currentValue, requestedValue, reason });
+  res.status(201).json(request);
+});
+
+router.patch("/planner/records/:id", requireAuth, requireRole("HOD"), async (req, res) => {
+  const editableFields = [
+    "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "dateOfDrive", "companyName", "jobProfile",
+    "packageText", "branch", "mode", "batch", "totalEligible", "totalRegistered", "dateSharedWithHr",
+    "dataShared", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate", "selections", "actualStatus",
+    "resultSharedBackend", "remarks"
+  ];
+  const numericFields = new Set(["totalEligible", "totalRegistered", "selections"]);
+  const dateFields = new Set(["dateFloated", "dateOfDrive", "dateSharedWithHr", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate"]);
+  const updates = {};
+  editableFields.forEach((field) => {
+    if (!(field in req.body)) return;
+    if (numericFields.has(field)) updates[field] = plannerNumber(req.body[field]);
+    else if (dateFields.has(field)) updates[field] = plannerDate(req.body[field]);
+    else updates[field] = String(req.body[field] ?? "");
+  });
+  if ("packageText" in updates) updates.packageLpa = plannerPackageLpa(updates.packageText);
+  const currentRecord = await PlacementRecord.findById(req.params.id);
+  if (!currentRecord) return res.status(404).json({ message: "Placement record not found" });
+  const writeBack = await triggerPlannerSheetUpdate(currentRecord, updates).catch(error => ({ ok: false, message: error.message }));
+  if (currentRecord.plannerAppsScriptUrl && writeBack?.ok === false && !writeBack?.skipped) {
+    return res.json({
+      blocked: true,
+      message: `${writeBack.message || "Google Sheet write-back failed."} App data was not changed. Check that this linked source uses the latest Apps Script and the exact Google Sheet tab URL with gid=.`,
+      writeBack
+    });
+  }
+  const record = await PlacementRecord.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
+  if (!record) return res.status(404).json({ message: "Placement record not found" });
+  res.json({ ...record.toObject(), writeBack });
+});
+
+router.post("/planner/edit-requests/:id/decision", requireAuth, requireRole("HOD"), async (req, res) => {
+  const status = String(req.body.status || "").toUpperCase();
+  if (!["APPROVED", "REJECTED"].includes(status)) return res.status(400).json({ message: "Valid decision is required" });
+  const request = await PlacementEditRequest.findById(req.params.id);
+  if (!request) return res.status(404).json({ message: "Request not found" });
+  if (status === "APPROVED" && request.field) {
+    const numericFields = new Set(["totalEligible", "totalRegistered", "selections"]);
+    const dateFields = new Set(["dateFloated", "dateOfDrive", "dateSharedWithHr", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate"]);
+    const editableFields = new Set([
+      "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "dateOfDrive", "companyName", "jobProfile",
+      "packageText", "branch", "mode", "batch", "totalEligible", "totalRegistered", "dateSharedWithHr",
+      "dataShared", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate", "selections", "actualStatus",
+      "resultSharedBackend", "remarks"
+    ]);
+    if (!editableFields.has(request.field)) return res.status(400).json({ message: "This field cannot be updated from an edit request" });
+    const value = numericFields.has(request.field)
+      ? plannerNumber(request.requestedValue)
+      : dateFields.has(request.field)
+        ? plannerDate(request.requestedValue)
+        : String(request.requestedValue ?? "");
+    const updates = { [request.field]: value };
+    if (request.field === "packageText") updates.packageLpa = plannerPackageLpa(value);
+    const currentRecord = await PlacementRecord.findById(request.record);
+    if (currentRecord) {
+      const writeBack = await triggerPlannerSheetUpdate(currentRecord, updates).catch(error => ({ ok: false, message: error.message }));
+      if (currentRecord.plannerAppsScriptUrl && writeBack?.ok === false && !writeBack?.skipped) {
+        return res.json({
+          blocked: true,
+          message: `${writeBack.message || "Google Sheet write-back failed."} Request was not approved and app data was not changed. Check that this linked source uses the latest Apps Script and the exact Google Sheet tab URL with gid=.`,
+          writeBack
+        });
+      }
+    }
+    await PlacementRecord.findByIdAndUpdate(request.record, updates, { runValidators: true });
+  }
+  request.status = status;
+  request.remarks = String(req.body.remarks || "");
+  request.reviewedBy = req.user._id;
+  request.reviewedAt = new Date();
+  await request.save();
+  res.json(request);
+});
 
 const driveSchema = z.object({
   companyName: z.string().min(2),

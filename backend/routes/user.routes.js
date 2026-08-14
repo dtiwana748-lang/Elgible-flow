@@ -1,10 +1,27 @@
 import { Router } from "express";
 import { z } from "zod";
+import crypto from "crypto";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { User } from "../models/User.js";
 import { writeAudit } from "../utils/audit.js";
 
 const router = Router();
+const AUTHORITY_LINK_DAYS = 90;
+
+function hashAuthorityToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function publicOrigin(req) {
+  return (process.env.CLIENT_ORIGIN || `${req.protocol}://${req.get("host")}`).split(",")[0].trim().replace(/\/+$/, "");
+}
+
+function issueAuthorityLink(user, req) {
+  const token = crypto.randomBytes(32).toString("base64url");
+  user.authorityLinkTokenHash = hashAuthorityToken(token);
+  user.authorityLinkExpiresAt = new Date(Date.now() + AUTHORITY_LINK_DAYS * 24 * 60 * 60 * 1000);
+  return `${publicOrigin(req)}/authority/${token}`;
+}
 
 const strongPassword = z.string()
   .min(8)
@@ -17,9 +34,13 @@ const strongPassword = z.string()
 const createUserSchema = z.object({
   name: z.string().min(2).max(80),
   email: z.string().email(),
-  password: strongPassword,
+  password: strongPassword.optional().or(z.literal("")),
   personalEmail: z.string().email().optional().or(z.literal("")),
+  designation: z.enum(["Outreach Member", "Placement Officer", "Higher Authorities"]).optional(),
   active: z.boolean().optional()
+}).refine((data) => data.designation === "Higher Authorities" || Boolean(data.password), {
+  message: "Initial password is required",
+  path: ["password"]
 });
 
 router.use(requireAuth, requireRole("HOD"));
@@ -58,15 +79,20 @@ router.post("/", async (req, res) => {
     employeeId: parsed.data.employeeId,
     phone: parsed.data.phone,
     department: parsed.data.department,
-    designation: parsed.data.designation,
+    designation: parsed.data.designation || "Outreach Member",
     assignedBatches: parsed.data.assignedBatches || [],
     active: parsed.data.active ?? true,
     personalEmail: parsed.data.personalEmail || undefined,
-    passwordHash: await User.hashPassword(parsed.data.password)
+    passwordHash: await User.hashPassword(parsed.data.password || crypto.randomBytes(18).toString("base64url"))
   });
+  let authorityLink = "";
+  if (user.designation === "Higher Authorities") {
+    authorityLink = issueAuthorityLink(user, req);
+    await user.save();
+  }
 
   await writeAudit({ actor: req.user._id, action: "USER_CREATED", entity: "User", entityId: user._id, metadata: { role: user.role } });
-  res.status(201).json({ id: user._id, name: user.name, email: user.email, role: user.role, active: user.active });
+  res.status(201).json({ id: user._id, name: user.name, email: user.email, role: user.role, designation: user.designation, active: user.active, authorityLink });
 });
 
 router.patch("/:id/status", async (req, res) => {
@@ -108,6 +134,7 @@ const updateUserSchema = z.object({
   name: z.string().min(2).max(80).optional(),
   email: z.string().email().optional(),
   personalEmail: z.string().email().optional().or(z.literal("")),
+  designation: z.enum(["Outreach Member", "Placement Officer", "Higher Authorities"]).optional(),
   active: z.boolean().optional(),
   password: strongPassword.optional().or(z.literal(""))
 });
@@ -127,6 +154,7 @@ router.patch("/:id", async (req, res) => {
 
   if (parsed.data.name) user.name = parsed.data.name;
   if (parsed.data.personalEmail !== undefined) user.personalEmail = parsed.data.personalEmail || undefined;
+  if (parsed.data.designation !== undefined) user.designation = parsed.data.designation;
   if (parsed.data.active !== undefined) {
     if (req.params.id === req.user._id.toString() && !parsed.data.active) {
       return res.status(400).json({ message: "You cannot deactivate your own account" });
@@ -140,7 +168,19 @@ router.patch("/:id", async (req, res) => {
 
   await user.save();
   await writeAudit({ actor: req.user._id, action: "USER_UPDATED", entity: "User", entityId: user._id });
-  res.json({ id: user._id, name: user.name, email: user.email, role: user.role, active: user.active, personalEmail: user.personalEmail });
+  res.json({ id: user._id, name: user.name, email: user.email, role: user.role, designation: user.designation, active: user.active, personalEmail: user.personalEmail });
+});
+
+router.post("/:id/authority-link", async (req, res) => {
+  const user = await User.findById(req.params.id).select("+authorityLinkTokenHash +authorityLinkExpiresAt");
+  if (!user) return res.status(404).json({ message: "User not found" });
+  if (user.role !== "LIST_MAKER" || user.designation !== "Higher Authorities") {
+    return res.status(400).json({ message: "Secure authority links are only available for Higher Authorities accounts" });
+  }
+  const authorityLink = issueAuthorityLink(user, req);
+  await user.save();
+  await writeAudit({ actor: req.user._id, action: "AUTHORITY_LINK_GENERATED", entity: "User", entityId: user._id });
+  res.json({ authorityLink, expiresAt: user.authorityLinkExpiresAt });
 });
 
 export default router;

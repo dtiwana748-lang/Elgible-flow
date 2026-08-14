@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   BarChart3, Bell, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
-  Crop, FileDown, Gauge, GraduationCap, Home, Info, LayoutDashboard, ListChecks, LogOut, MoveHorizontal, MoveVertical, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users, UsersRound, X, ZoomIn
+  Crop, FileDown, Gauge, GraduationCap, Home, Info, KeyRound, LayoutDashboard, ListChecks, LogOut, MoveHorizontal, MoveVertical, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users, UsersRound, X, ZoomIn, Calendar
 } from "lucide-react";
 import { api, downloadApiFile } from "../api.js";
 import { assetUrl } from "../api.js";
@@ -10,21 +10,26 @@ import { useAuth } from "../context/AuthContext.jsx";
 
 const hodNav = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "eligibility", label: "Eligibility Lists", icon: ListChecks },
-  { id: "drives", label: "Drives & Reports", icon: BriefcaseBusiness },
-  { id: "student-requests", label: "Student Requests", icon: FileSearch },
-  { id: "managers", label: "Managers", icon: UsersRound },
-  { id: "records", label: "Records", icon: Database },
+  { id: "managers", label: "Manager", icon: UsersRound },
+  { id: "planner", label: "Planner", icon: FileSpreadsheet },
+  { id: "requests", label: "Requests", icon: FileSearch },
   { id: "profile", label: "Profile", icon: UserCog }
 ];
 
-const makerNav = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "eligibility", label: "Eligibility Lists", icon: ListChecks },
-  { id: "master-data", label: "Master Data", icon: Database },
-  { id: "drives", label: "My Drives", icon: BriefcaseBusiness },
-  { id: "profile", label: "Profile", icon: UserCog }
-];
+const makerNav = (user) => {
+  const designation = String(user?.designation || "").toLowerCase();
+  if (designation.includes("higher")) {
+    return [
+      { id: "dashboard", label: "Overview", icon: LayoutDashboard },
+      { id: "report-cards", label: "Reports", icon: BarChart3 }
+    ];
+  }
+  return [
+    { id: "report-cards", label: "Reports", icon: BarChart3 },
+    { id: "edit-requests", label: "Edit Requests", icon: FileSearch },
+    { id: "profile", label: "Profile", icon: UserCog }
+  ];
+};
 
 const fieldLabels = {
   name: "Full Name",
@@ -39,6 +44,9 @@ const fieldLabels = {
   jobRole: "Job Role",
   driveType: "Drive Type",
   packageCtc: "Package / CTC",
+  dateFloated: "Date of Floated",
+  dateOfDrive: "Date of Drive",
+  finalSelectionDate: "Final Selection Date",
   driveDate: "Drive Date",
   batch: "Batch",
   course: "Course",
@@ -115,6 +123,7 @@ function formatDateTime(value) {
   });
 }
 
+
 function safeNumber(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -122,20 +131,50 @@ function safeNumber(value, fallback = 0) {
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
-  const [active, setActive] = useState("dashboard");
+  const isHod = user.role === "HOD";
+  const isHigherAuthority = String(user.designation || "").toLowerCase().includes("higher");
   const [driveInitialTab, setDriveInitialTab] = useState("drives");
   const [selectedEligibilityList, setSelectedEligibilityList] = useState(null);
-  const isHod = user.role === "HOD";
-  const nav = isHod ? hodNav : makerNav;
+  const nav = isHod ? hodNav : makerNav(user);
+  const defaultActive = isHod || isHigherAuthority ? "dashboard" : "report-cards";
+  const [active, setActiveState] = useState(() => {
+    const saved = localStorage.getItem(`placement-report-active-${user.role}`);
+    return nav.some(item => item.id === saved) ? saved : defaultActive;
+  });
+  const [pendingPlannerRequests, setPendingPlannerRequests] = useState(0);
+  const setActive = (next) => {
+    localStorage.setItem(`placement-report-active-${user.role}`, next);
+    setActiveState(next);
+  };
+
+  useEffect(() => {
+    if (!nav.some(item => item.id === active)) setActive(defaultActive);
+  }, [active, defaultActive, nav]);
+
+  useEffect(() => {
+    if (!isHod) return;
+    let activeRequest = true;
+    api("/drives/planner/edit-requests/pending-count")
+      .then(data => {
+        if (activeRequest) setPendingPlannerRequests(data.count || 0);
+      })
+      .catch(() => {
+        if (activeRequest) setPendingPlannerRequests(0);
+      });
+    return () => { activeRequest = false; };
+  }, [isHod, active]);
 
   return (
     <main className="app-shell">
-      <RoleSidebar nav={nav} active={active} setActive={setActive} user={user} logout={logout} />
+      <RoleSidebar nav={nav} active={active} setActive={setActive} user={user} logout={logout} pendingPlannerRequests={pendingPlannerRequests} />
       <section className="workspace">
-        {active === "dashboard" && <DashboardHome user={user} setActive={setActive} setDriveInitialTab={setDriveInitialTab} />}
+        {active === "dashboard" && <PlacementPlannerPage user={user} pageType="dashboard" />}
         {active === "managers" && isHod && <ManagersPage />}
-        {active === "records" && isHod && <RecordsPage />}
-        {active === "student-requests" && isHod && <StudentRequestsPage />}
+        {active === "report-cards" && <PlacementPlannerPage user={user} pageType="report-cards" />}
+        {active === "edit-requests" && <PlacementPlannerPage user={user} pageType="edit-requests" />}
+        {active === "planner" && <PlacementPlannerPage user={user} pageType="planner" />}
+        {active === "requests" && isHod && <PlannerRequestsPage />}
+        {active === "student-requests" && (isHod ? <StudentRequestsPage /> : <DriveWisePage user={user} initialTab="requests" />)}
         {active === "eligibility" && <EligibilityListsPage setSelectedList={setSelectedEligibilityList} setActive={setActive} isHod={isHod} />}
         {active === "create-eligibility" && !isHod && <CreateEligibilityListPage onComplete={(list) => { setSelectedEligibilityList(list); setActive("eligibility"); }} />}
         {active === "view-eligibility" && selectedEligibilityList && <EligibilityListDetailPage list={selectedEligibilityList} back={() => setActive("eligibility")} isHod={isHod} />}
@@ -146,37 +185,41 @@ export default function Dashboard() {
     </main>
   );
 }
-
-function RoleSidebar({ nav, active, setActive, user, logout }) {
+function RoleSidebar({ nav, active, setActive, user, logout, pendingPlannerRequests = 0 }) {
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const isHigherAuthority = String(user?.designation || "").toLowerCase().includes("higher");
   return (
     <>
       {/* Desktop Sidebar */}
       <aside className="sidebar pro desktop-sidebar">
         <div className="brand-lockup compact">
-          <img src="/logo.png" alt="Eligibility Flow logo" />
+          <img src="/logo.png" alt="Placement Report logo" />
           <div>
-            <h1>Eligibility Flow</h1>
-            <p>{user.role === "HOD" ? "Administration" : "Placement Officer"}</p>
+            <h1>Placement Report</h1>
+            <p>{user.role === "HOD" ? "Head Workspace" : (user.designation || "Placement Team")}</p>
           </div>
         </div>
         <nav>
           {nav.map((item) => {
             const Icon = item.icon;
+            const showRequestDot = item.id === "requests" && pendingPlannerRequests > 0;
             return (
               <button key={item.id} className={`nav-item ${active === item.id ? "active" : ""}`} onClick={() => setActive(item.id)} title={item.label}>
                 <Icon size={18} />
                 <span>{item.label}</span>
+                {showRequestDot && <i className="nav-request-dot" aria-label={`${pendingPlannerRequests} pending requests`} />}
               </button>
             );
           })}
         </nav>
-        <button className="ghost signout" onClick={logout} title="Sign out"><LogOut size={17} /> Sign Out</button>
+        {!isHigherAuthority && <button className="ghost signout" onClick={() => setConfirmSignOut(true)} title="Sign out"><LogOut size={17} /> Sign Out</button>}
       </aside>
 
       {/* Mobile Bottom Navigation */}
       <nav className="mobile-bottom-nav">
         {nav.map((item) => {
           const Icon = item.icon;
+          const showRequestDot = item.id === "requests" && pendingPlannerRequests > 0;
           return (
             <button
               key={item.id}
@@ -186,23 +229,38 @@ function RoleSidebar({ nav, active, setActive, user, logout }) {
             >
               <Icon size={22} />
               <span>{item.label}</span>
+              {showRequestDot && <i className="nav-request-dot" aria-label={`${pendingPlannerRequests} pending requests`} />}
             </button>
           );
         })}
       </nav>
+      {confirmSignOut && (
+        <ConfirmDialog
+          title="Sign out of Placement Report?"
+          message="You will leave the workspace and return to the secure login page."
+          confirmLabel="Sign Out"
+          cancelLabel="Stay Signed In"
+          icon={LogOut}
+          onConfirm={logout}
+          onCancel={() => setConfirmSignOut(false)}
+          onDone={() => setConfirmSignOut(false)}
+        />
+      )}
     </>
   );
 }
 
 function PageHeader({ eyebrow, title, subtitle, children }) {
   const { user, logout } = useAuth();
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
   const avatarSrc = assetUrl(user?.profileImage);
   const initials = (user?.name || user?.email || "U").slice(0, 1).toUpperCase();
+  const isHigherAuthority = String(user?.designation || "").toLowerCase().includes("higher");
   return (
     <header className="topbar">
-      <button className="mobile-header-logout" type="button" onClick={logout} title="Sign out" aria-label="Sign out">
+      {!isHigherAuthority && <button className="mobile-header-logout" type="button" onClick={() => setConfirmSignOut(true)} title="Sign out" aria-label="Sign out">
         <LogOut size={19} />
-      </button>
+      </button>}
       <div>
         <p className="eyebrow">{eyebrow}</p>
         <h2>{title}</h2>
@@ -214,6 +272,18 @@ function PageHeader({ eyebrow, title, subtitle, children }) {
           {avatarSrc ? <img src={avatarSrc} alt="" /> : <span>{initials}</span>}
         </div>
       </div>
+      {confirmSignOut && (
+        <ConfirmDialog
+          title="Sign out of Placement Report?"
+          message="You will leave the workspace and return to the secure login page."
+          confirmLabel="Sign Out"
+          cancelLabel="Stay Signed In"
+          icon={LogOut}
+          onConfirm={logout}
+          onCancel={() => setConfirmSignOut(false)}
+          onDone={() => setConfirmSignOut(false)}
+        />
+      )}
     </header>
   );
 }
@@ -475,7 +545,7 @@ function DashboardHome({ user, setActive, setDriveInitialTab }) {
               <button type="button" onClick={() => setActive("drives")} className="quick-launch-card quick-launch-blue">
                 <BriefcaseBusiness size={20} />
                 <span>
-                  <strong>Drives & Reports</strong>
+                  <strong>Placement Report</strong>
                   <small>Drive statistics, selections, and attendance sheets</small>
                 </span>
               </button>
@@ -632,7 +702,7 @@ function StudentSearchPanel({ filters, setFilters, options, students, error, onS
     <section className="panel dashboard-search-panel">
       <div className="search-panel-heading">
         <div>
-          <h3><Search size={19} /> Student Search & HOD Reports</h3>
+          <h3><Search size={19} /> Student Search & Head Reports</h3>
           <p className="subtle">Search by student name, roll number, enrollment number, email, department, or program. Filter department-wise, course-wise, batch-wise, and semester-wise.</p>
         </div>
         <button className="download-report" onClick={handleDownload}><FileDown size={17} /> Download Excel</button>
@@ -755,14 +825,16 @@ function SimpleChart({ title, data = [], onViewAll }) {
     </section>
   );
 }
-
 function ManagersPage() {
   const [managers, setManagers] = useState([]);
-  const [form, setForm] = useState({ name: "", email: "", personalEmail: "", password: "" });
+  const [managerSearch, setManagerSearch] = useState("");
+  const [form, setForm] = useState({ name: "", email: "", personalEmail: "", password: "", designation: "Outreach Member" });
   const [editingId, setEditingId] = useState("");
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("success");
   const [confirmAction, setConfirmAction] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [authorityLink, setAuthorityLink] = useState("");
 
   async function load() {
     try {
@@ -774,9 +846,39 @@ function ManagersPage() {
   }
   useEffect(() => { load(); }, []);
 
+  useEffect(() => {
+    if (message) {
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) {
+          const ctx = new AudioContext();
+          const osc = ctx.createOscillator();
+          const gainNode = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(600, ctx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(1000, ctx.currentTime + 0.1);
+          gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+          gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+          osc.connect(gainNode);
+          gainNode.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.1);
+        }
+      } catch (e) {
+        console.error("Audio playback failed:", e);
+      }
+      
+      const timer = setTimeout(() => {
+        setMessage("");
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [message]);
+
   function resetManagerForm() {
-    setForm({ name: "", email: "", personalEmail: "", password: "" });
+    setForm({ name: "", email: "", personalEmail: "", password: "", designation: "Outreach Member" });
     setEditingId("");
+    setShowForm(false);
   }
 
   function editManager(manager) {
@@ -785,9 +887,11 @@ function ManagersPage() {
       name: manager.name || "",
       email: manager.email || "",
       personalEmail: manager.personalEmail || "",
-      password: ""
+      password: "",
+      designation: manager.designation || "Placement Officer"
     });
     setMessage("");
+    setShowForm(true);
   }
 
   async function saveManager(event) {
@@ -795,14 +899,19 @@ function ManagersPage() {
     try {
       const payload = { ...form };
       if (!payload.password) delete payload.password;
-      await api(editingId ? `/users/${editingId}` : "/users", {
+      const data = await api(editingId ? `/users/${editingId}` : "/users", {
         method: editingId ? "PATCH" : "POST",
         body: JSON.stringify(payload)
       });
       const wasEditing = Boolean(editingId);
       resetManagerForm();
       setMessageType("success");
-      setMessage(wasEditing ? "Placement Officer account updated successfully." : "Placement Officer account created successfully.");
+      if (data.authorityLink) {
+        setAuthorityLink(data.authorityLink);
+        setMessage("Higher Authority account created. Copy the secure link below.");
+      } else {
+        setMessage(wasEditing ? "Placement Officer account updated successfully." : "Placement Officer account created successfully.");
+      }
       await load();
     } catch (error) {
       setMessageType("error");
@@ -824,11 +933,10 @@ function ManagersPage() {
       setMessage(`Unable to update ${manager.name}: ${error.message}`);
     }
   }
-
   function deleteManager(manager) {
     setConfirmAction({
       title: "Delete placement officer?",
-      message: `${manager.name} will immediately lose login access. Their historical drives and records will remain available to the HOD.`,
+      message: `${manager.name} will immediately lose login access. Their historical drives and records will remain available to the Head.`,
       confirmLabel: "Delete Account",
       cancelLabel: "Keep Account",
       onConfirm: async () => {
@@ -841,50 +949,144 @@ function ManagersPage() {
     });
   }
 
+  async function generateAuthorityLink(manager) {
+    try {
+      const result = await api(`/users/${manager.id}/authority-link`, { method: "POST" });
+      setAuthorityLink(result.authorityLink);
+      setMessageType("success");
+      setMessage(`Secure Higher Authority link generated for ${manager.name}.`);
+    } catch (error) {
+      setMessageType("error");
+      setMessage(`Unable to generate secure link: ${error.message}`);
+    }
+  }
+
+  async function copyAuthorityLink() {
+    try {
+      if (navigator.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(authorityLink);
+      } else {
+        const input = document.createElement("textarea");
+        input.value = authorityLink;
+        input.setAttribute("readonly", "");
+        input.style.position = "fixed";
+        input.style.left = "-9999px";
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand("copy");
+        document.body.removeChild(input);
+      }
+      setAuthorityLink("");
+      setMessageType("success");
+      setMessage("Secure authority link copied.");
+    } catch {
+      setMessageType("error");
+      setMessage("Unable to copy automatically. Select and copy the link manually.");
+    }
+  }
+
+  const normalizedManagerSearch = managerSearch.trim().toLowerCase();
+  const filteredManagers = normalizedManagerSearch
+    ? managers.filter((manager) => [
+      manager.name,
+      manager.email,
+      manager.personalEmail,
+      manager.designation,
+      manager.active ? "active" : "inactive"
+    ].some((value) => String(value || "").toLowerCase().includes(normalizedManagerSearch)))
+    : managers;
+
   return (
     <>
-      <PageHeader eyebrow="Manager Administration" title="Placement Officers" subtitle="Create and manage Placement Officer accounts">
-        <button><UserPlus size={17} /> Create Manager</button>
+      <PageHeader eyebrow="Team Administration" title="Manager" subtitle="Create and manage Outreach Member and Placement Officer accounts">
+        <button onClick={() => setShowForm(true)}><UserPlus size={17} /> Add Team Member</button>
       </PageHeader>
       {message && <div className={`notice manager-notice ${messageType === "error" ? "error" : "success"}`} role="status">{message}</div>}
-      <section className="panel">
-        <h3>{editingId ? "Edit Manager" : "Create Manager"}</h3>
-        <form className="manager-simple-form" onSubmit={saveManager}>
-          {["name", "email", "personalEmail"].map((field) => (
-            <label key={field}>{labelFor(field)}<input type={field.includes("Email") || field === "email" ? "email" : "text"} value={form[field]} onChange={(e) => setForm({ ...form, [field]: e.target.value })} required={["name", "email"].includes(field)} /></label>
-          ))}
-          <label>{editingId ? "New Password (optional)" : "Initial Password"}<input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required={!editingId} minLength={editingId && !form.password ? undefined : 8} maxLength={128} autoComplete="new-password" /></label>
-          <button><Save size={17} /> {editingId ? "Update Placement Officer" : "Save Placement Officer"}</button>
-          {editingId && <button className="soft" type="button" onClick={resetManagerForm}><X size={17} /> Cancel</button>}
-        </form>
-      </section>
+      {authorityLink && (
+        <section className="authority-link-panel">
+          <div>
+            <span className="eyebrow">Higher authority access</span>
+            <h3>Secure dashboard link</h3>
+            <p>Share this private link only with the intended authority. It opens their overview and report workspace directly.</p>
+          </div>
+          <input readOnly value={authorityLink} onFocus={(event) => event.target.select()} />
+          <button type="button" onClick={copyAuthorityLink}>Copy Link</button>
+        </section>
+      )}
+      
+      {showForm && (
+        <div className="modal-overlay">
+          <section className="manager-form-panel modal-panel">
+            <header className="manager-form-header">
+              <h3>{editingId ? "Edit Team Member" : "Create Team Member"}</h3>
+              <p>{editingId ? "Update the details for this team member below." : "Add a new Placement Officer or Outreach Member to the workspace."}</p>
+            </header>
+            <form className="premium-manager-form" onSubmit={saveManager}>
+              <div className="form-grid-2">
+                <label>Full Name<input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
+                <label>Official Email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></label>
+                <label>Personal Email (Optional)<input type="email" value={form.personalEmail} onChange={(e) => setForm({ ...form, personalEmail: e.target.value })} /></label>
+                <label>Role<select value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })}><option>Outreach Member</option><option>Placement Officer</option><option>Higher Authorities</option></select></label>
+                <label className="full-width">{editingId || form.designation === "Higher Authorities" ? "New Password (optional)" : "Initial Password"}<input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required={!editingId && form.designation !== "Higher Authorities"} minLength={(editingId || form.designation === "Higher Authorities") && !form.password ? undefined : 8} maxLength={128} autoComplete="new-password" /><small>Use uppercase, lowercase, number, and special character.</small></label>
+              </div>
+              <div className="form-actions">
+                <button className="btn-primary" type="submit"><Save size={17} /> {editingId ? "Update Team Member" : "Save Team Member"}</button>
+                <button className="btn-secondary" type="button" onClick={resetManagerForm}><X size={17} /> Cancel</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
 
       <section className="panel" style={{ marginTop: "22px", overflow: "visible" }}>
-        <h3 style={{ margin: "0 0 16px 0", display: "flex", alignItems: "center", gap: "8px" }}>
-          <UsersRound size={18} /> Registered Placement Officers
-        </h3>
+        <div className="manager-list-toolbar">
+          <h3>
+            <UsersRound size={18} /> Registered Team Members
+          </h3>
+          <label className="manager-search" aria-label="Search team members">
+            <Search size={18} />
+            <input
+              type="search"
+              placeholder="Search by name, email, role, or status"
+              value={managerSearch}
+              onChange={(event) => setManagerSearch(event.target.value)}
+            />
+            {managerSearch && (
+              <button type="button" className="manager-search-clear" onClick={() => setManagerSearch("")} title="Clear search" aria-label="Clear search">
+                <X size={16} />
+              </button>
+            )}
+          </label>
+        </div>
         <DataTable
           className="managers-table"
-          columns={["Name", "Official Email", "Personal Email", "Status", "Last Login", "Created", "Actions"]}
-          rows={managers.map((m) => [
+          columns={["Manager Name", "Official Email", "Status", "Actions"]}
+          rows={filteredManagers.map((m) => [
             <div key={m.id} className="manager-name-cell">
               <div className="header-profile manager-avatar" title={m.name}>
                 {m.profileImage ? <img src={assetUrl(m.profileImage)} alt="" /> : <span style={{ fontSize: "12px" }}>{m.name.slice(0, 1).toUpperCase()}</span>}
               </div>
-              <strong>{m.name}</strong>
+              <div className="manager-name-details">
+                <strong>{m.name}</strong>
+                <span className="manager-sub-detail">{m.designation || "Placement Officer"}</span>
+                <span className="manager-sub-detail">{m.personalEmail || "No personal email"}</span>
+              </div>
             </div>,
             m.email,
-            m.personalEmail || "-",
             <span key={`${m.id}-status`} className={`status ${m.active ? "approved" : "rejected"}`}>{m.active ? "Active" : "Inactive"}</span>,
-            m.lastLoginAt ? new Date(m.lastLoginAt).toLocaleString() : "-",
-            new Date(m.createdAt).toLocaleDateString(),
             <div key={`${m.id}-actions`} className="manager-actions">
               <button className="soft manager-action-btn" onClick={() => editManager(m)}><Settings2 size={14} /> Edit</button>
+              {m.designation === "Higher Authorities" && <button className="soft manager-action-btn" onClick={() => generateAuthorityLink(m)}><ShieldCheck size={14} /> Link</button>}
               <button className={`manager-action-btn ${m.active ? "soft danger-action" : "soft"}`} onClick={() => toggleManager(m)}>{m.active ? "Deactivate" : "Activate"}</button>
               <button className="soft danger-action manager-action-btn" onClick={() => deleteManager(m)}><Trash2 size={14} /> Delete</button>
             </div>
           ])}
         />
+        {!filteredManagers.length && (
+          <div className="manager-search-empty">
+            No team members match "{managerSearch.trim()}". Try a name, email, role, or status.
+          </div>
+        )}
       </section>
       {confirmAction && (
         <ConfirmDialog
@@ -897,6 +1099,7 @@ function ManagersPage() {
           }}
         />
       )}
+      {message && <div className={`manager-notice ${messageType}`} role="status">{message}</div>}
     </>
   );
 }
@@ -1355,6 +1558,1854 @@ function FilterBar({ filters, setFilters }) {
   );
 }
 
+function PlacementPlannerPage({ user, pageType = "dashboard" }) {
+  const currentYear = new Date().getMonth() >= 6 ? `${new Date().getFullYear()}-${new Date().getFullYear() + 1}` : `${new Date().getFullYear() - 1}-${new Date().getFullYear()}`;
+  const defaultBatchForYear = value => {
+    const match = String(value || currentYear).match(/^(\d{4})(?:-(\d{4}))?/);
+    if (!match) return "2027";
+    return match[2] || String(Number(match[1]) + 1);
+  };
+  const [report, setReport] = useState(null);
+  const [year, setYear] = useState("");
+  const [uploadYear, setUploadYear] = useState(currentYear);
+  const batchYearOptions = Array.from({ length: 11 }, (_, index) => String(2025 + index));
+  const [uploadBatch, setUploadBatch] = useState(defaultBatchForYear(currentYear));
+  const [uploadSheetName, setUploadSheetName] = useState("");
+  const [plannerSheetUrl, setPlannerSheetUrl] = useState("");
+  const [plannerAppsScriptUrl, setPlannerAppsScriptUrl] = useState("");
+  const [showPlannerScript, setShowPlannerScript] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [previewSearch, setPreviewSearch] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [showLinkPreviewCard, setShowLinkPreviewCard] = useState(false);
+  const [replaceYearData, setReplaceYearData] = useState(false);
+  const [managerUsers, setManagerUsers] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [requestSearch, setRequestSearch] = useState("");
+  const [requestRecordId, setRequestRecordId] = useState("");
+  const [requestField, setRequestField] = useState("companyName");
+  const [requestValue, setRequestValue] = useState("");
+  const [requestReason, setRequestReason] = useState("");
+  const [confirmRemovePlanner, setConfirmRemovePlanner] = useState(false);
+  const [confirmSourceDelete, setConfirmSourceDelete] = useState(null);
+  const [showPlannerUpload, setShowPlannerUpload] = useState(false);
+  const [historyPreviewSource, setHistoryPreviewSource] = useState("");
+  const [historyPreviewSearch, setHistoryPreviewSearch] = useState("");
+  const [historyEditSource, setHistoryEditSource] = useState("");
+  const [historySearch, setHistorySearch] = useState("");
+  const [selectedOfficer, setSelectedOfficer] = useState("ALL");
+  const [selectedBatch, setSelectedBatch] = useState(pageType === "dashboard" ? defaultBatchForYear(currentYear) : "ALL");
+  const isHead = user.role === "HOD";
+  const isHigherAuthority = String(user.designation || "").toLowerCase().includes("higher");
+
+  const overview = pageType === "dashboard";
+
+  async function load(selectedYear = year) {
+    try {
+      const data = await api(`/drives/planner/report${selectedYear ? `?academicYear=${encodeURIComponent(selectedYear)}` : ""}`);
+      setReport(data); setYear(data.academicYear || selectedYear);
+    } catch (error) { setMessage(error.message); }
+  }
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!isHead) return;
+    api("/users").then((items) => setManagerUsers(items || [])).catch(() => setManagerUsers([]));
+  }, [isHead]);
+  useEffect(() => {
+    if (pageType === "dashboard" && selectedBatch === "ALL") {
+      setSelectedBatch(defaultBatchForYear(year || currentYear));
+    }
+  }, [pageType, year, selectedBatch, currentYear]);
+
+  async function uploadPlanner(event) {
+    event.preventDefault();
+    if (!plannerSheetUrl.trim()) return;
+    setBusy(true); setMessage("");
+    try {
+      const result = await api("/drives/planner/import-url", {
+        method: "POST",
+        body: JSON.stringify({ sheetUrl: plannerSheetUrl, appsScriptUrl: plannerAppsScriptUrl, academicYear: uploadYear, batch: uploadBatch, sheetName: uploadSheetName, replaceYear: String(replaceYearData) })
+      });
+      setMessage(result.message); setYear(uploadYear); setSelectedBatch(uploadBatch); await load(uploadYear); setPreview(null); setPreviewSearch(""); setShowPlannerUpload(false);
+    } catch (error) { setMessage(error.message); } finally { setBusy(false); }
+  }
+
+  async function previewPlannerLink() {
+    setPreview(null);
+    setPreviewSearch("");
+    if (!plannerSheetUrl.trim()) return;
+    setPreviewLoading(true);
+    try {
+      setPreview(await api("/drives/planner/preview-url", { method: "POST", body: JSON.stringify({ sheetUrl: plannerSheetUrl }) }));
+      setShowLinkPreviewCard(true);
+    } catch (error) {
+      setPreview({ error: error.message, rows: [], columns: [] });
+      setShowLinkPreviewCard(true);
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function removePlannerYear() {
+    setBusy(true); setMessage("");
+    try {
+      const targetYear = year || uploadYear;
+      const batchQuery = selectedBatch !== "ALL" ? `&batch=${encodeURIComponent(selectedBatch)}` : "";
+      const result = await api(`/drives/planner/records?academicYear=${encodeURIComponent(targetYear)}${batchQuery}`, { method: "DELETE" });
+      setMessage(result.message); await load(targetYear);
+    } catch (error) { setMessage(error.message); } finally { setBusy(false); }
+  }
+
+  async function removePlannerSource() {
+    if (!confirmSourceDelete?.sourceFile) return;
+    setBusy(true); setMessage("");
+    try {
+      const result = await api(`/drives/planner/source?sourceFile=${encodeURIComponent(confirmSourceDelete.sourceFile)}&academicYear=${encodeURIComponent(year || uploadYear)}`, { method: "DELETE" });
+      setMessage(result.message);
+      if (historyEditSource === confirmSourceDelete.sourceFile) setHistoryEditSource("");
+      if (historyPreviewSource === confirmSourceDelete.sourceFile) setHistoryPreviewSource("");
+      await load(year);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function syncPlannerSource(item) {
+    if (!item?.sourceSheetUrl) {
+      setMessage("This source is not linked to a Google Sheet URL.");
+      return;
+    }
+    setBusy(true); setMessage("");
+    try {
+      const result = await api("/drives/planner/import-url", {
+        method: "POST",
+        body: JSON.stringify({
+          sheetUrl: item.sourceSheetUrl,
+          appsScriptUrl: item.plannerAppsScriptUrl || "",
+          academicYear: year || uploadYear,
+          batch: item.batches?.length === 1 ? item.batches[0] : "",
+          sheetName: item.sourceFile,
+          replaceYear: "false"
+        })
+      });
+      setMessage(`${result.message}. Latest Google Sheet changes are now in the app.`);
+      await load(year);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function downloadPlannerSheet(rowsOverride, filenameSuffix) {
+    const rows = rowsOverride || visibleRecords || [];
+    if (!rows.length) {
+      setMessage("No planner rows available to download for the selected filters.");
+      return;
+    }
+    const columns = [
+      ["ron", "RON"], ["placementOfficer", "Placement Officer"], ["companyCategory", "Company Category"], ["leadBy", "Lead By"],
+      ["dateFloated", "Date of Floated"], ["dateOfDrive", "Date of Drive"], ["companyName", "Company Name"], ["jobProfile", "Job Profile"], ["packageText", "Package"],
+      ["branch", "Branch"], ["mode", "Mode"], ["batch", "Batch"], ["totalEligible", "Total Eligible"],
+      ["totalRegistered", "Total Reg Count"], ["dateSharedWithHr", "Date Shared With HR"], ["dataShared", "Data Shared Yes / No"],
+      ["round1Date", "Round 1 Date"], ["round2Date", "Round 2 Date"], ["shortlistedDate", "Shortlisted Date"],
+      ["finalSelectionDate", "Final Selection Date"], ["selections", "No. of Selections"], ["actualStatus", "Actual Status"], ["resultSharedBackend", "Result to be Share With Backend Yes/ No"], ["remarks", "Remarks"]
+    ];
+    const csvValue = value => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const csv = [
+      columns.map(([, label]) => csvValue(label)).join(","),
+      ...rows.map(record => columns.map(([key]) => csvValue(record[key])).join(","))
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `planner-${filenameSuffix || `${year || uploadYear}-${selectedBatch === "ALL" ? "all-batches" : selectedBatch}`}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+  }
+
+  async function requestCorrection(record, payload) {
+    const reason = payload?.reason || window.prompt(`What should be corrected for ${record.companyName}?`);
+    if (!reason) return;
+    try { await api(`/drives/planner/records/${record._id}/edit-request`, { method: "POST", body: JSON.stringify({ ...payload, reason }) }); setMessage("Correction request sent to the Head."); await load(year); }
+    catch (error) { setMessage(error.message); }
+  }
+
+  async function submitPlannerEditRequest(event) {
+    event.preventDefault();
+    const record = visibleRecords.find(item => item._id === requestRecordId) || visibleRecords[0];
+    if (!record) {
+      setMessage("No planner row is available for an edit request.");
+      return;
+    }
+    const currentValue = String(record[requestField] ?? "");
+    await requestCorrection(record, {
+      field: requestField,
+      currentValue,
+      requestedValue: requestValue,
+      reason: requestReason
+    });
+    setRequestValue("");
+    setRequestReason("");
+  }
+
+  async function decideRequest(id, status) {
+    try {
+      const result = await api(`/drives/planner/edit-requests/${id}/decision`, { method: "POST", body: JSON.stringify({ status }) });
+      if (result?.blocked) {
+        setMessage(result.message || "Google Sheet write-back was blocked. Request was not approved.");
+        return;
+      }
+      setMessage(`Request ${status.toLowerCase()}.`);
+      await load(year);
+    }
+    catch (error) { setMessage(error.message); }
+  }
+
+  const normalizePerson = value => {
+    const cleaned = String(value || "").trim().toLowerCase().replace(/\./g, "").replace(/\s+/g, " ");
+    if (!cleaned) return "";
+    if (cleaned.includes("jagdeep")) return "jagdeep";
+    if (cleaned.includes("drashti") || cleaned.includes("drashti shamra") || cleaned.includes("drashti sharma")) return "drashti";
+    if (cleaned.includes("garima") || cleaned.includes("gramia")) return "garima";
+    if (cleaned.includes("abhilasha") || cleaned.includes("abhilasa")) return "abhilasha";
+    if (cleaned.includes("evp") || cleaned.includes("sushil") || cleaned.includes("parashar") || cleaned.includes("prashar")) return "sushil parashar";
+    if (cleaned.includes("avleen") || cleaned.includes("avaleen")) return "avleen kaur";
+    if (cleaned.includes("manish")) return "manish";
+    const aliases = {
+      "manish sir": "manish",
+      "mr manish": "manish",
+      "avleen mam": "avleen kaur",
+      "avleen maam": "avleen kaur",
+      "evp sir": "sushil parashar",
+      "mr sushil parashar": "sushil parashar"
+    };
+    return aliases[cleaned] || cleaned.replace(/^mr\s+/, "");
+  };
+  const displayPersonName = value => {
+    const normalized = normalizePerson(value);
+    const manager = managerUsers.find(item => normalizePerson(item.name) === normalized);
+    if (manager?.name) return manager.name;
+    const labels = {
+      jagdeep: "Jagdeep Sharma",
+      drashti: "Drashti Sharma",
+      garima: "Garima",
+      abhilasha: "Abhilasha",
+      manish: "Mr. Manish",
+      "avleen kaur": "Avleen Kaur",
+      "sushil parashar": "Mr. Sushil Parashar"
+    };
+    return labels[normalized] || String(value || "Unassigned").trim();
+  };
+  const normalizePackageLpa = value => {
+    const raw = String(value ?? "").replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+    const number = raw ? Number(raw[0]) : Number(value);
+    if (!Number.isFinite(number)) return 0;
+    if (number > 100000) return Number((number / 100000).toFixed(2));
+    if (number > 1000) return Number((number / 100000).toFixed(2));
+    return number;
+  };
+  const summarizePlannerRows = list => {
+    const closed = list.filter(r => /closed|complete|selected/i.test(r.actualStatus || ""));
+    const inProcess = list.filter(r => /process|open|ongoing|pending|floated/i.test(r.actualStatus || ""));
+    return {
+      floated: list.length,
+      closed: closed.length,
+      inProcess: inProcess.length,
+      selections: list.reduce((sum, r) => sum + (r.selections || 0), 0),
+      eligible: list.reduce((sum, r) => sum + (r.totalEligible || 0), 0),
+      registered: list.reduce((sum, r) => sum + (r.totalRegistered || 0), 0),
+      highestPackage: Math.max(0, ...list.map(r => normalizePackageLpa(r.packageLpa || r.packageText || r.package)))
+    };
+  };
+  const plannerSerial = value => {
+    const match = String(value ?? "").match(/\d+/);
+    return match ? Number(match[0]) : Number.MAX_SAFE_INTEGER;
+  };
+  const sortPlannerRecords = list => [...(list || [])].sort((a, b) => {
+    const sheetCompare = String(a.sourceSheetId || "").localeCompare(String(b.sourceSheetId || ""));
+    if (sheetCompare) return sheetCompare;
+    const tabCompare = String(a.sourceSheetGid || "").localeCompare(String(b.sourceSheetGid || ""));
+    if (tabCompare) return tabCompare;
+    return (Number(a.sourceRow || 0) - Number(b.sourceRow || 0))
+      || (plannerSerial(a.ron) - plannerSerial(b.ron))
+      || String(a.ron || "").localeCompare(String(b.ron || ""), undefined, { numeric: true });
+  });
+  const allRecords = sortPlannerRecords(report?.records || []);
+  const allComparisonRecords = sortPlannerRecords(report?.comparisonRecords || allRecords);
+  const recordBatchName = record => String(record.batch || record.academicYear || "").trim();
+  const batchOptions = [...new Set([...allRecords, ...allComparisonRecords].map(recordBatchName).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const filteredRecords = sortPlannerRecords(allRecords.filter(record => selectedBatch === "ALL" || recordBatchName(record) === selectedBatch));
+  const filteredComparisonRecords = sortPlannerRecords(allComparisonRecords.filter(record => selectedBatch === "ALL" || recordBatchName(record) === selectedBatch || recordBatchName(record) !== recordBatchName(filteredRecords[0] || {})));
+  const managerRoleRank = name => {
+    const manager = managerUsers.find(item => normalizePerson(item.name) === normalizePerson(name));
+    const designation = String(manager?.designation || "").toLowerCase();
+    if (designation.includes("outreach")) return 0;
+    if (designation.includes("placement")) return 1;
+    if (designation.includes("higher")) return 2;
+    return 3;
+  };
+  const groupNames = [...new Set([
+      ...managerUsers.map(manager => manager.name).filter(Boolean),
+      ...filteredRecords.flatMap(record => [record.placementOfficer, record.leadBy]).filter(Boolean)
+    ])].reduce((map, name) => {
+      const key = normalizePerson(name);
+      if (!key) return map;
+      if (!map.has(key)) map.set(key, displayPersonName(name));
+      return map;
+    }, new Map());
+  const reportGroups = isHead
+    ? [...groupNames.entries()].map(([managerKey, name]) => {
+      const records = filteredRecords.filter(record => (
+        normalizePerson(record.placementOfficer) === managerKey || normalizePerson(record.leadBy) === managerKey
+      ));
+      const comparisonRecords = filteredComparisonRecords.filter(record => (
+        normalizePerson(record.placementOfficer) === managerKey || normalizePerson(record.leadBy) === managerKey
+      ));
+      return { name, summary: summarizePlannerRows(records), records, comparisonRecords: comparisonRecords.length ? comparisonRecords : allComparisonRecords };
+    }).sort((a, b) => managerRoleRank(a.name) - managerRoleRank(b.name) || a.name.localeCompare(b.name))
+    : [{ name: user.name, summary: summarizePlannerRows(filteredRecords), records: filteredRecords, outreach: user.designation?.toLowerCase().includes("outreach") }];
+  const allGroups = reportGroups;
+  
+  const groups = selectedOfficer === "ALL" ? allGroups : allGroups.filter(g => g.name === selectedOfficer);
+  const visibleRecords = selectedOfficer === "ALL" ? filteredRecords : (groups[0]?.records || []);
+  const summary = summarizePlannerRows(visibleRecords);
+  const uploadedYearOptions = (report?.years || []).map(String).filter(Boolean);
+  const yearOptions = (uploadedYearOptions.length ? uploadedYearOptions : [year || currentYear])
+    .filter(Boolean)
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  const sheetHistory = Object.values(filteredRecords.reduce((map, record) => {
+    const key = record.sourceFile || "Uploaded planner file";
+    if (!map[key]) map[key] = { sourceFile: key, sourceSheetUrl: record.sourceSheetUrl || "", plannerAppsScriptUrl: record.plannerAppsScriptUrl || "", rows: 0, firstRow: record.sourceRow || 0, lastRow: record.sourceRow || 0, batches: new Set(), officers: new Set(), uploadedAt: record.createdAt || record.updatedAt || "" };
+    map[key].rows += 1;
+    if (record.batch) map[key].batches.add(String(record.batch));
+    if (record.placementOfficer) map[key].officers.add(String(record.placementOfficer));
+    if (record.createdAt && (!map[key].uploadedAt || new Date(record.createdAt) < new Date(map[key].uploadedAt))) map[key].uploadedAt = record.createdAt;
+    if (record.sourceRow) {
+      map[key].firstRow = Math.min(map[key].firstRow || record.sourceRow, record.sourceRow);
+      map[key].lastRow = Math.max(map[key].lastRow || record.sourceRow, record.sourceRow);
+    }
+    return map;
+  }, {})).map(item => ({ ...item, batches: [...item.batches], officers: [...item.officers] }))
+    .sort((a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0));
+  const visibleSheetHistory = sheetHistory.filter(item => !historySearch.trim() || [
+    item.sourceFile,
+    item.batches.join(" "),
+    item.officers.join(" "),
+    formatDateTime(item.uploadedAt)
+  ].join(" ").toLowerCase().includes(historySearch.trim().toLowerCase()));
+  const previewRows = (preview?.rows || []).filter(row => !previewSearch.trim() || Object.values(row).join(" ").toLowerCase().includes(previewSearch.trim().toLowerCase()));
+  const previewColumns = (preview?.columns || []).slice(0, 8);
+  const historyPreviewRows = filteredRecords
+    .filter(record => (record.sourceFile || "Uploaded planner file") === historyPreviewSource)
+    .filter(record => !historyPreviewSearch.trim() || placementSheetColumns.some(([key]) => String(record[key] ?? "").toLowerCase().includes(historyPreviewSearch.trim().toLowerCase())));
+  const historyPreviewColumns = placementSheetColumns.slice(0, 10);
+  const requestFieldOptions = [
+    "companyName", "jobProfile", "placementOfficer", "leadBy", "dateFloated", "dateOfDrive", "batch", "actualStatus", "finalSelectionDate",
+    "totalEligible", "totalRegistered", "selections", "packageText", "remarks"
+  ];
+  const requestRows = visibleRecords.filter(record => !requestSearch.trim() || [
+    record.companyName, record.jobProfile, record.placementOfficer, record.leadBy, record.batch, record.actualStatus
+  ].join(" ").toLowerCase().includes(requestSearch.trim().toLowerCase()));
+  const selectedRequestRecord = visibleRecords.find(item => item._id === requestRecordId) || requestRows[0] || visibleRecords[0];
+  const requestHistory = report?.requests || [];
+  const pendingRequests = requestHistory.filter(item => item.status === "PENDING").length;
+  const plannerAppsScriptTemplate = `function respond(payload) {
+  return ContentService
+    .createTextOutput(JSON.stringify(payload))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function normalizeHeader(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/20\\d{2}/g, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeStrict(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+var PLANNER_COLUMN_LAYOUTS = {
+  "2026": ["ron", "placementOfficer", "companyCategory", "leadBy", "companyName", "jobProfile", "packageText", "branch", "mode", "dateFloated", "dateOfDrive", "batch", "totalEligible", "totalRegistered", "dataShared", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate", "actualStatus", "resultSharedBackend", "remarks"],
+  "2027": ["ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "companyName", "jobProfile", "packageText", "branch", "mode", "batch", "totalEligible", "totalRegistered", "dateSharedWithHr", "dataShared", "round1Date", "round2Date", "shortlistedDate", "selections", "actualStatus", "resultSharedBackend", "remarks"],
+  "2028": ["ron", "placementOfficer", "companyCategory", "leadBy", "companyName", "jobProfile", "packageText", "branch", "mode", "dateFloated", "dateOfDrive", "batch", "totalEligible", "totalRegistered", "dataShared", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate", "actualStatus", "resultSharedBackend", "remarks"],
+  "2029": ["ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "companyName", "jobProfile", "packageText", "branch", "mode", "dateOfDrive", "batch", "totalEligible", "totalRegistered", "dataShared", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate", "actualStatus", "resultSharedBackend", "remarks"]
+};
+
+function findColumn(headers, aliases) {
+  var wanted = (aliases || []).map(normalizeHeader).filter(Boolean);
+  var exact = headers.findIndex(function(header) {
+    return wanted.indexOf(normalizeHeader(header)) >= 0;
+  });
+  if (exact >= 0) return exact;
+  return headers.findIndex(function(header) {
+    var key = normalizeHeader(header);
+    return key && wanted.some(function(alias) {
+      return key === alias || key.indexOf(alias) >= 0 || alias.indexOf(key) >= 0;
+    });
+  });
+}
+
+function layoutColumn(headers, field, batch) {
+  var batchYears = String(batch || "").match(/20\\d{2}/g) || [];
+  var batchYear = batchYears[batchYears.length - 1];
+  var layout = batchYear && PLANNER_COLUMN_LAYOUTS[batchYear];
+  if (!layout) return -1;
+  var startIndex = headers.findIndex(function(header) {
+    return ["sr", "ron", "sno", "srno", "serial", "serialno"].indexOf(normalizeHeader(header)) >= 0;
+  });
+  var fieldIndex = layout.indexOf(field);
+  if (fieldIndex < 0) return -1;
+  var column = (startIndex >= 0 ? startIndex : 0) + fieldIndex;
+  return column < headers.length ? column : -1;
+}
+
+function plannerColumn(headers, field, aliases, batch) {
+  var column = findColumn(headers, aliases || [field]);
+  return column >= 0 ? column : layoutColumn(headers, field, batch);
+}
+
+function findHeaderRow(matrix) {
+  return matrix.findIndex(function(row) {
+    var keys = row.map(normalizeHeader).filter(Boolean);
+    var joined = keys.join(" ");
+    return keys.some(function(key) { return key.indexOf("company") >= 0; }) &&
+      (joined.indexOf("placement") >= 0 ||
+       joined.indexOf("job") >= 0 ||
+       joined.indexOf("profile") >= 0 ||
+       joined.indexOf("package") >= 0 ||
+       joined.indexOf("status") >= 0);
+  });
+}
+
+function selectPlannerSheet(spreadsheet, payload) {
+  var expectedBatch = normalizeStrict(payload.expectedBatch || "");
+  var byName = payload.sheetName ? spreadsheet.getSheetByName(String(payload.sheetName)) : null;
+  if (byName && (!expectedBatch || normalizeStrict(byName.getName()).indexOf(expectedBatch) >= 0)) return byName;
+
+  var byGid = spreadsheet.getSheets().find(function(sheet) {
+    return String(sheet.getSheetId()) === String(payload.sheetGid || "");
+  });
+  if (byGid && (!expectedBatch || normalizeStrict(byGid.getName()).indexOf(expectedBatch) >= 0)) return byGid;
+
+  if (expectedBatch) {
+    return spreadsheet.getSheets().find(function(sheet) {
+      return normalizeStrict(sheet.getName()).indexOf(expectedBatch) >= 0;
+    }) || null;
+  }
+  return byName || byGid || null;
+}
+
+function doGet() {
+  return respond({ ok: true, message: "Placify planner write-back script is deployed." });
+}
+
+function doPost(e) {
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(20000)) return respond({ ok: false, message: "Sheet is busy. Try saving again." });
+
+  try {
+    var payload = JSON.parse((e && e.postData && e.postData.contents) || "{}");
+    if (payload.action !== "plannerUpdate") return respond({ ok: false, message: "Unknown action" });
+
+    var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = selectPlannerSheet(spreadsheet, payload);
+    if (!sheet) return respond({ ok: false, message: "Batch tab not found. Open the exact batch tab URL and relink it in Placify." });
+
+    var expectedBatch = normalizeStrict(payload.expectedBatch || "");
+    if (expectedBatch && normalizeStrict(sheet.getName()).indexOf(expectedBatch) < 0) {
+      return respond({ ok: false, message: "Sheet tab mismatch. Edit blocked to protect another batch tab.", selectedSheet: sheet.getName() });
+    }
+
+    var matrix = sheet.getDataRange().getValues();
+    var headerRowIndex = findHeaderRow(matrix);
+    if (headerRowIndex < 0) return respond({ ok: false, message: "Header row not found in selected tab." });
+
+    var rowNumber = Number(payload.rowNumber);
+    if (!Number.isFinite(rowNumber) || rowNumber <= headerRowIndex + 1 || rowNumber > sheet.getLastRow()) {
+      return respond({ ok: false, message: "Invalid source row. Relink/sync this batch tab." });
+    }
+
+    var headers = matrix[headerRowIndex].map(String);
+    var rowValues = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+
+    var srColumn = findColumn(headers, ["sr", "ron", "s no", "sr no", "serial", "serial no"]);
+    var batchColumn = findColumn(headers, ["batch", "passing batch", "academic batch"]);
+    var companyColumn = findColumn(headers, ["company name", "company", "employer", "organisation", "organization"]);
+
+    var rowSr = srColumn >= 0 ? String(rowValues[srColumn] || "").trim() : "";
+    var rowBatch = batchColumn >= 0 ? String(rowValues[batchColumn] || "").trim() : "";
+    var rowCompany = companyColumn >= 0 ? String(rowValues[companyColumn] || "").trim() : "";
+
+    if (payload.expectedRon && rowSr && normalizeStrict(rowSr) !== normalizeStrict(payload.expectedRon)) {
+      return respond({ ok: false, message: "Row serial mismatch. Relink/sync this batch tab before editing.", selectedSheet: sheet.getName(), rowNumber: rowNumber });
+    }
+    if (payload.expectedBatch && rowBatch && normalizeStrict(rowBatch).indexOf(normalizeStrict(payload.expectedBatch)) < 0) {
+      return respond({ ok: false, message: "Batch mismatch. Edit blocked to protect another batch.", selectedSheet: sheet.getName(), rowBatch: rowBatch });
+    }
+    if (payload.expectedCompanyName && rowCompany && normalizeHeader(rowCompany) !== normalizeHeader(payload.expectedCompanyName)) {
+      return respond({ ok: false, message: "Company mismatch. Relink/sync this batch tab before editing.", selectedSheet: sheet.getName(), rowCompany: rowCompany });
+    }
+
+    var updatedColumns = 0;
+    var skippedFields = [];
+    Object.keys(payload.data || {}).forEach(function(field) {
+      var column = plannerColumn(headers, field, (payload.aliases && payload.aliases[field]) || [field], payload.expectedBatch || sheet.getName());
+      if (column >= 0) {
+        sheet.getRange(rowNumber, column + 1).setValue(payload.data[field]);
+        updatedColumns++;
+      } else {
+        skippedFields.push(field);
+      }
+    });
+
+    if (!updatedColumns) return respond({ ok: false, message: "No matching columns found for this edit.", skippedFields: skippedFields, selectedSheet: sheet.getName() });
+    SpreadsheetApp.flush();
+    return respond({ ok: true, selectedSheet: sheet.getName(), rowNumber: rowNumber, updatedColumns: updatedColumns, skippedFields: skippedFields });
+  } catch (error) {
+    return respond({ ok: false, message: error && error.message ? error.message : String(error) });
+  } finally {
+    lock.releaseLock();
+  }
+}`;
+  return <>
+    <PageHeader eyebrow={overview ? "Head Performance Workspace" : (pageType === "edit-requests" ? "Planner Corrections" : (pageType === "report-cards" ? "Report Cards" : "Year-wise Planner"))} title={overview ? "Placement Performance Dashboard" : (pageType === "edit-requests" ? "Edit Requests" : (pageType === "report-cards" ? "Officer Report Cards" : "Placement Planner & Linked Sheets"))} subtitle={pageType === "edit-requests" ? "Request a correction for any planner row and track its status" : "All figures are calculated directly from the linked company tracker"}>
+      {isHead && pageType === "planner" && <button type="button" onClick={() => { const nextYear = year || currentYear; setUploadYear(nextYear); setUploadBatch(selectedBatch !== "ALL" ? selectedBatch : defaultBatchForYear(nextYear)); setUploadSheetName(""); setPlannerSheetUrl(""); setPlannerAppsScriptUrl(""); setPreview(null); setPreviewSearch(""); setShowLinkPreviewCard(false); setShowPlannerUpload(true); }}><FileSpreadsheet size={17} /> Link Sheet</button>}
+    </PageHeader>
+    <div className={`planner-yearbar ${pageType === "dashboard" ? "dashboard-filterbar" : ""}`}>
+      {pageType === "report-cards" && (
+        <label>Academic year
+          <select value={year} onChange={e => { setYear(e.target.value); load(e.target.value); }}>
+            {yearOptions.map(item => <option key={item} value={item}>{item.split("-")[0]}</option>)}
+          </select>
+        </label>
+      )}
+      <label>Batch
+        <select value={selectedBatch} onChange={e => setSelectedBatch(e.target.value)}>
+          <option value="ALL">All Batches</option>
+          {batchOptions.map(item => <option key={item} value={item}>{item}</option>)}
+        </select>
+      </label>
+      {isHead && (pageType === "dashboard" || pageType === "report-cards" || pageType === "planner") && (
+        <label>Placement Officer
+          <select value={selectedOfficer} onChange={e => setSelectedOfficer(e.target.value)}>
+            <option value="ALL">All Officers</option>
+            {allGroups.map(g => <option key={g.name} value={g.name}>{g.name}</option>)}
+          </select>
+        </label>
+      )}
+      {pageType !== "dashboard" && <span className="planner-source"><ShieldCheck size={16}/> Verified from linked Google Sheet</span>}
+    </div>
+
+    {pageType === "edit-requests" && <section className="edit-request-page">
+      <div className="edit-request-builder">
+        <div>
+          <span className="eyebrow">New request</span>
+          <h3>Request planner field correction</h3>
+          <p>Select the row and field that should be changed. Your request goes to the Head with full status tracking.</p>
+        </div>
+        <form onSubmit={submitPlannerEditRequest}>
+          <label className="edit-request-search">Search planner row
+            <div><Search size={16} /><input value={requestSearch} onChange={event => setRequestSearch(event.target.value)} placeholder="Search company, role, batch, status" /></div>
+          </label>
+          <label>Planner row
+            <select value={selectedRequestRecord?._id || ""} onChange={event => setRequestRecordId(event.target.value)} required>
+              {requestRows.map(record => <option key={record._id} value={record._id}>{record.companyName || "Unnamed company"} · {record.jobProfile || "No role"} · {record.batch || "No batch"}</option>)}
+            </select>
+          </label>
+          <label>Field to change
+            <select value={requestField} onChange={event => { setRequestField(event.target.value); setRequestValue(""); }} required>
+              {requestFieldOptions.map(field => <option key={field} value={field}>{labelFor(field)}</option>)}
+            </select>
+          </label>
+          <label>Current value
+            <input value={selectedRequestRecord ? String(selectedRequestRecord[requestField] ?? "") : ""} readOnly />
+          </label>
+          <label>Requested value
+            <input value={requestValue} onChange={event => setRequestValue(event.target.value)} placeholder="Enter corrected value" required />
+          </label>
+          <label className="wide">Reason
+            <textarea value={requestReason} onChange={event => setRequestReason(event.target.value)} placeholder="Explain why this correction is needed" required minLength={5} />
+          </label>
+          <button disabled={!selectedRequestRecord || !requestValue || !requestReason}><FileSearch size={17} /> Send Edit Request</button>
+        </form>
+      </div>
+      <div className="edit-request-history-panel">
+        <div>
+          <span className="eyebrow">Status history</span>
+          <h3>{pendingRequests} pending request{pendingRequests === 1 ? "" : "s"}</h3>
+        </div>
+        <div className="edit-request-history-list">
+          {requestHistory.map(item => (
+            <article key={item._id}>
+              <span className={`request-status ${String(item.status || "").toLowerCase()}`}>{item.status}</span>
+              <strong>{item.record?.companyName || "Planner row"}</strong>
+              <p>{item.field ? `${labelFor(item.field)}: ${item.currentValue || "-"} -> ${item.requestedValue || "-"}` : item.reason}</p>
+              <small>{item.reason}</small>
+            </article>
+          ))}
+          {!requestHistory.length && <EmptyState icon={FileSearch} message="No edit requests sent yet" />}
+        </div>
+      </div>
+    </section>}
+
+    {false && isHead && pageType === "planner" && <section className="planner-sheet-status">
+      <div>
+        <span className="eyebrow">Current planner sheet</span>
+        <h3>{year || uploadYear} · {selectedBatchLabel}</h3>
+        <p>{visibleRecords.length ? `${visibleRecords.length} rows loaded from ${activeSourceCount} uploaded source${activeSourceCount === 1 ? "" : "s"}.` : "No sheet is uploaded for this selection yet."}</p>
+      </div>
+      <div className="planner-status-actions">
+        <button type="button" className="soft" onClick={() => downloadPlannerSheet()} disabled={!visibleRecords.length}><FileDown size={17} /> Download Sheet</button>
+        <button type="button" className="soft" onClick={() => { setUploadYear(year || currentYear); setUploadBatch(selectedBatch !== "ALL" ? selectedBatch : "2026"); setUploadSheetName(sheetHistory[0]?.sourceFile || ""); setPreview(null); setPreviewSearch(""); setReplaceYearData(true); setShowPlannerUpload(true); }}><RefreshCcw size={17} /> Update Sheet</button>
+        <button type="button" className="danger planner-remove-data" onClick={() => setConfirmRemovePlanner(true)} disabled={!visibleRecords.length || busy}><Trash2 size={17} /> Remove</button>
+      </div>
+    </section>}
+
+    {showPlannerUpload && createPortal(
+      <div className="modal-overlay planner-upload-overlay">
+        <section className="planner-upload-modal modal-panel">
+          <header>
+            <div>
+              <span className="eyebrow">Planner link</span>
+              <h3>Link Google planner sheet</h3>
+              <p>Connect the Google Sheet so planner data can sync both ways.</p>
+            </div>
+            <div className="planner-link-header-actions">
+              <button type="button" className="soft" onClick={previewPlannerLink} disabled={!plannerSheetUrl.trim() || previewLoading}><Eye size={17}/>{previewLoading ? "Reading..." : "Preview"}</button>
+              <button type="submit" form="planner-link-form" disabled={busy || !plannerSheetUrl.trim()}><FileSpreadsheet size={17}/>{busy ? "Linking..." : "Link Sheet"}</button>
+              <button type="button" className="soft" onClick={() => setShowPlannerUpload(false)}>Cancel</button>
+            </div>
+          </header>
+          <form id="planner-link-form" onSubmit={uploadPlanner} className="planner-file-form">
+            <label className="planner-sheet-name">Sheet name
+              <input value={uploadSheetName} onChange={e => setUploadSheetName(e.target.value)} placeholder="Example: 2026 MBA Planner" required />
+            </label>
+            <label>Batch
+              <select value={uploadBatch} onChange={e => setUploadBatch(e.target.value)} required>
+                {[...new Set([...batchYearOptions, ...batchOptions])].map(item => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </label>
+            <div className="planner-script-box">
+              <div className="planner-script-guide">
+                <div>
+                  <strong>Bidirectional setup guide</strong>
+                  <span>Open the Google Sheet file, go to Extensions &gt; Apps Script, paste this script once for the file, deploy it as a Web app, then paste the Web App URL below.</span>
+                </div>
+                <button type="button" className="soft" onClick={() => setShowPlannerScript(value => !value)}><FileSearch size={16} /> {showPlannerScript ? "Hide" : "Show"} Sheet Script</button>
+              </div>
+              {showPlannerScript && <textarea readOnly value={plannerAppsScriptTemplate} />}
+            </div>
+            <label className="planner-file-input">Google Sheet tab link
+              <input value={plannerSheetUrl} onChange={e => { setPlannerSheetUrl(e.target.value); setPreview(null); }} placeholder="Open the exact batch tab, then paste its URL with gid=..." required />
+            </label>
+            <label className="planner-file-input">Apps Script Web App URL
+              <input value={plannerAppsScriptUrl} onChange={e => setPlannerAppsScriptUrl(e.target.value)} placeholder="Paste deployed Apps Script web app URL for write-back" />
+            </label>
+            <p className="planner-import-hint"><Info size={16} /> Paste the exact tab URL for the batch sheet. The Apps Script URL can be reused for other tabs in the same Google Sheet file.</p>
+            {preview?.error && <p className="planner-preview-error">{preview.error}</p>}
+          </form>
+        </section>
+      </div>,
+      document.body
+    )}
+
+    {showLinkPreviewCard && createPortal(
+      <div className="modal-overlay planner-link-preview-overlay">
+        <section className="planner-link-preview-card modal-panel">
+          <header>
+            <div>
+              <span className="eyebrow">Sheet preview</span>
+              <h3>{preview?.fileName || uploadSheetName || "Linked Google Sheet"}</h3>
+              <p>{preview?.rowCount != null ? `${preview.rowCount} rows detected from the linked sheet.` : "Preview the linked Google Sheet before saving."}</p>
+            </div>
+            <button type="button" className="icon-button soft" onClick={() => setShowLinkPreviewCard(false)} aria-label="Close preview"><X size={18} /></button>
+          </header>
+          <div className="planner-link-preview-toolbar">
+            <label className="planner-preview-search"><Search size={15} /><input value={previewSearch} onChange={e => setPreviewSearch(e.target.value)} placeholder="Search preview rows" disabled={!preview?.rows?.length} /></label>
+            <button type="button" className="soft" onClick={previewPlannerLink} disabled={!plannerSheetUrl.trim() || previewLoading}><RefreshCcw size={15} /> {previewLoading ? "Reading..." : "Refresh Preview"}</button>
+          </div>
+          {preview?.error && <p className="planner-preview-error">{preview.error}</p>}
+          {!preview?.error && previewColumns.length > 0 && (
+            <div className="planner-preview-table planner-link-preview-table">
+              <table>
+                <thead><tr>{previewColumns.map(column => <th key={column}>{column}</th>)}</tr></thead>
+                <tbody>
+                  {previewRows.slice(0, 40).map((row, index) => <tr key={index}>{previewColumns.map(column => <td key={column} title={String(row[column] ?? "")}>{String(row[column] ?? "-")}</td>)}</tr>)}
+                  {!previewRows.length && <tr><td colSpan={previewColumns.length}>No preview rows match this search.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </div>,
+      document.body
+    )}
+    
+    {message && <ToastMessage toast={{ type: /unable|failed|required|no planner|error/i.test(message) ? "error" : "success", message }} onClose={() => setMessage("")} />}
+
+    {isHead && pageType === "planner" && !!sheetHistory.length && (
+      <section className="planner-history-panel">
+        <div className="planner-history-intro">
+          <span className="eyebrow">Import history</span>
+          <h3>Linked planner sources</h3>
+          <p>{sheetHistory.length} linked source{sheetHistory.length === 1 ? "" : "s"} for {year || uploadYear}</p>
+        </div>
+        <div className="planner-history-content">
+          <label className="planner-history-search"><Search size={16} /><input value={historySearch} onChange={event => setHistorySearch(event.target.value)} placeholder="Search sheet, batch, date" /></label>
+          <div className="planner-history-list">
+          {visibleSheetHistory.map(item => (
+            <article key={item.sourceFile}>
+              <FileSpreadsheet size={18} />
+              <div>
+                <strong>{item.sourceFile}</strong>
+                <small>Uploaded {formatDateTime(item.uploadedAt)}</small>
+                <span>{item.rows} rows imported{item.firstRow ? `, sheet rows ${item.firstRow}-${item.lastRow}` : ""}{item.batches.length ? ` · Batch ${item.batches.join(", ")}` : ""}</span>
+              </div>
+              <div className="planner-history-actions">
+                <button type="button" className="soft" onClick={() => { setHistoryPreviewSearch(""); setHistoryPreviewSource(item.sourceFile); }}><Eye size={15} /> Preview</button>
+                {item.sourceSheetUrl && <a className="soft button-link" href={item.sourceSheetUrl} target="_blank" rel="noreferrer"><FileSpreadsheet size={15} /> Open</a>}
+                {item.sourceSheetUrl && <button type="button" className="soft" onClick={() => syncPlannerSource(item)} disabled={busy}><RefreshCcw size={15} /> Sync</button>}
+                <button type="button" className="soft" onClick={() => setHistoryEditSource(historyEditSource === item.sourceFile ? "" : item.sourceFile)}><Save size={15} /> Edit</button>
+                <button type="button" className="soft" onClick={() => {
+                  const sourceRows = filteredRecords.filter(record => (record.sourceFile || "Uploaded planner file") === item.sourceFile);
+                  downloadPlannerSheet(sourceRows, item.sourceFile.replace(/[^a-z0-9_-]+/gi, "_"));
+                }}><FileDown size={15} /> Download</button>
+                <button type="button" className="soft danger-action" onClick={() => setConfirmSourceDelete(item)} disabled={busy}><Trash2 size={15} /> Delete</button>
+              </div>
+            </article>
+          ))}
+          {!visibleSheetHistory.length && <EmptyState icon={Search} message="No linked sheets match this search" />}
+          </div>
+        </div>
+      </section>
+    )}
+
+    {historyEditSource && isHead && pageType === "planner" && (
+      <section className="editable-planner-section planner-source-editor">
+        <EditablePlacementSheet
+          year={year}
+          memberName={historyEditSource}
+          records={filteredRecords.filter(record => (record.sourceFile || "Uploaded planner file") === historyEditSource)}
+          onReload={() => load(year)}
+          onClose={() => setHistoryEditSource("")}
+        />
+      </section>
+    )}
+
+    {historyPreviewSource && createPortal(
+      <div className="modal-overlay planner-upload-overlay">
+        <section className="planner-upload-modal modal-panel planner-history-preview-modal">
+          <header>
+            <div>
+              <span className="eyebrow">Sheet preview</span>
+              <h3>{historyPreviewSource}</h3>
+              <p>{historyPreviewRows.length} imported planner rows{historyPreviewSearch.trim() ? " matching search" : ""}</p>
+            </div>
+            <div className="history-preview-header-tools">
+              <label className="planner-preview-search history-preview-search"><Search size={16} /><input value={historyPreviewSearch} onChange={event => setHistoryPreviewSearch(event.target.value)} placeholder="Search company, officer, batch, status" /></label>
+              <button type="button" className="soft" onClick={() => { setHistoryPreviewSource(""); setHistoryPreviewSearch(""); }}>Close</button>
+            </div>
+          </header>
+          <div className="planner-preview-table history-preview-table">
+            <table>
+              <thead><tr>{historyPreviewColumns.map(([, label]) => <th key={label}>{label}</th>)}</tr></thead>
+              <tbody>
+                {historyPreviewRows.slice(0, 80).map(record => (
+                  <tr key={record._id}>
+                    {historyPreviewColumns.map(([key]) => <td key={`${record._id}-${key}`} title={String(record[key] ?? "")}>{String(record[key] ?? "-")}</td>)}
+                  </tr>
+                ))}
+                {!historyPreviewRows.length && <tr><td colSpan={historyPreviewColumns.length}>No rows match this preview search.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>,
+      document.body
+    )}
+
+    {confirmRemovePlanner && (
+      <ConfirmDialog
+        title={`Remove planner data for ${selectedBatch === "ALL" ? year || uploadYear : `${selectedBatch} in ${year || uploadYear}`}?`}
+        message="This removes imported planner rows from the app. Your original Excel, CSV, or Google Sheet file will not be changed."
+        confirmLabel="Remove Data"
+        cancelLabel="Keep Data"
+        icon={Trash2}
+        onConfirm={removePlannerYear}
+        onCancel={() => setConfirmRemovePlanner(false)}
+        onDone={() => setConfirmRemovePlanner(false)}
+        onError={setMessage}
+      />
+    )}
+    
+    {isHead && report?.requests?.some(item => item.status === "PENDING") && pageType === "planner" && <section className="planner-requests"><h3>Pending report corrections</h3>{report.requests.filter(item => item.status === "PENDING").map(item => <article key={item._id}><div><strong>{item.requester?.name} · {item.record?.companyName}</strong><p>{item.reason}</p></div><button onClick={() => decideRequest(item._id, "APPROVED")}>Approve</button><button className="soft" onClick={() => decideRequest(item._id, "REJECTED")}>Reject</button></article>)}</section>}
+    
+    {confirmSourceDelete && (
+      <ConfirmDialog
+        title={`Delete ${confirmSourceDelete.sourceFile}?`}
+        message={`This removes ${confirmSourceDelete.rows} imported planner rows from this uploaded source. Other uploaded sources stay unchanged.`}
+        confirmLabel="Delete Sheet"
+        cancelLabel="Keep Sheet"
+        icon={Trash2}
+        onConfirm={removePlannerSource}
+        onCancel={() => setConfirmSourceDelete(null)}
+        onDone={() => setConfirmSourceDelete(null)}
+        onError={setMessage}
+      />
+    )}
+
+    {isHigherAuthority && pageType === "dashboard" && <AuthorityOverview summary={summary} records={visibleRecords} />}
+
+    {(pageType === "report-cards" || (pageType === "dashboard" && !isHigherAuthority)) && (
+      <section className="planner-groups" style={{ marginTop: '2rem' }}>
+        {groups.map((group, index) => <PlannerReportCard key={`${group.outreach}-${group.name}-${index}`} group={group} year={year} selectedBatch={selectedBatch} canEdit={isHead} canRequest={!isHead} requests={report?.requests || []} onRequest={requestCorrection} onReload={() => load(year)} />)}
+        {!groups.length && <EmptyState icon={FileSpreadsheet} message="Upload a planner sheet to generate year-wise report cards" />}
+      </section>
+    )}
+
+    {isHead && pageType === "dashboard" && !isHigherAuthority && (
+      <DashboardTargetPlanner groups={groups} year={year} selectedBatch={selectedBatch} />
+    )}
+
+    {isHead && selectedOfficer !== "ALL" && pageType === "planner" && (
+      <section className="editable-planner-section" style={{ marginTop: '2rem' }}>
+        <EditablePlacementSheet
+          year={year}
+          memberName={selectedOfficer}
+          records={groups.find(group => group.name === selectedOfficer)?.records || []}
+          onReload={() => load(year)}
+        />
+      </section>
+    )}
+  </>;
+}
+
+function DashboardTargetPlanner({ groups, year, selectedBatch }) {
+  const [editMode, setEditMode] = useState(false);
+  const [targetOverrides, setTargetOverrides] = useState({});
+  const [detail, setDetail] = useState(null);
+  const quarters = [
+    { key: "julSep", label: "Jul-Sep", months: [6, 7, 8] },
+    { key: "octDec", label: "Oct-Dec", months: [9, 10, 11] },
+    { key: "janMar", label: "Jan-Mar", months: [0, 1, 2] },
+    { key: "aprJun", label: "April-Jun", months: [3, 4, 5] }
+  ];
+  const visibleGroups = groups.filter(group => (group.records || []).length);
+  const rows = visibleGroups.flatMap(group => (group.records || []).map(record => ({ ...record, __owner: group.name })));
+  const officerNames = visibleGroups.map(group => group.name).join(", ");
+  const selectedYear = selectedBatch && selectedBatch !== "ALL" ? selectedBatch : String(year || "").split("-").at(-1);
+  const parseDate = value => {
+    const text = String(value || "").trim();
+    if (!text) return null;
+    const date = new Date(text);
+    return Number.isFinite(date.getTime()) ? date : null;
+  };
+  const quarterFor = record => {
+    const date = parseDate(record.dateFloated || record.dateOfDrive || record.finalSelectionDate);
+    if (!date) return quarters[0];
+    return quarters.find(quarter => quarter.months.includes(date.getMonth())) || quarters[0];
+  };
+  const packageBand = record => {
+    const raw = String(record.packageText || record.packageLpa || "").replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+    let value = raw ? Number(raw[0]) : Number(record.packageLpa || 0);
+    if (!Number.isFinite(value)) value = 0;
+    if (value > 1000) value = value / 100000;
+    if (value >= 15) return "zsd";
+    if (value >= 10) return "sd";
+    if (value >= 5) return "aPlus";
+    return "a";
+  };
+  const closed = record => /closed|complete|selected/i.test(record.actualStatus || "");
+  const quarterRows = quarter => rows.filter(record => quarterFor(record).key === quarter.key);
+  const bandCount = (list, band) => list.filter(record => packageBand(record) === band).length;
+  const rowSet = (quarter, filter = () => true) => quarterRows(quarter).filter(filter);
+  const sectionRows = quarters.map(quarter => {
+    const list = quarterRows(quarter);
+    const closedList = list.filter(closed);
+    return {
+      quarter,
+      target: rowSet(quarter),
+      achieved: rowSet(quarter, closed),
+      zsd: rowSet(quarter, record => packageBand(record) === "zsd"),
+      sd: rowSet(quarter, record => packageBand(record) === "sd"),
+      aPlus: rowSet(quarter, record => packageBand(record) === "aPlus"),
+      a: rowSet(quarter, record => packageBand(record) === "a"),
+      achievedZsd: rowSet(quarter, record => closed(record) && packageBand(record) === "zsd"),
+      achievedSd: rowSet(quarter, record => closed(record) && packageBand(record) === "sd"),
+      achievedAPlus: rowSet(quarter, record => closed(record) && packageBand(record) === "aPlus"),
+      achievedA: rowSet(quarter, record => closed(record) && packageBand(record) === "a"),
+      floated: rowSet(quarter),
+      closed: rowSet(quarter, closed),
+      delay: rowSet(quarter, record => !closed(record) && parseDate(record.dateFloated)),
+      sales: rowSet(quarter, record => !String(record.companyCategory || record.remarks || "").toLowerCase().includes("core")),
+      core: rowSet(quarter, record => String(record.companyCategory || record.remarks || "").toLowerCase().includes("core"))
+    };
+  });
+  const targetKeys = ["target", "zsd", "sd", "aPlus", "a"];
+  const valueFor = (item, key, mode) => {
+    const overrideKey = `${item.quarter.key}:${key}`;
+    if (mode === "target" && targetOverrides[overrideKey] !== undefined) return Number(targetOverrides[overrideKey] || 0);
+    return item[key]?.length || 0;
+  };
+  const recordsFor = (item, key) => item[key] || [];
+  const total = (key, mode) => sectionRows.reduce((sum, item) => sum + valueFor(item, key, mode), 0);
+  const totalRecords = key => sectionRows.flatMap(item => recordsFor(item, key));
+  const columnsByMode = {
+    target: [
+      ["target", "Target Allotted"],
+      ["zsd", "ZSD Companies (>=15 LPA)"],
+      ["sd", "SD Companies (Between 10-15 LPA)"],
+      ["aPlus", "A+ (Between 5-10 LPA)"],
+      ["a", "A (Between 3-5 LPA)"]
+    ],
+    achieved: [
+      ["achieved", "Target Achieved"],
+      ["achievedZsd", "ZSD Companies (>=15 LPA)"],
+      ["achievedSd", "SD Companies (Between 10-15 LPA)"],
+      ["achievedAPlus", "A+ (Between 5-10 LPA)"],
+      ["achievedA", "A (Between 3-5 LPA)"]
+    ],
+    stats: [
+      ["floated", "Floated Companies"],
+      ["closed", "Closed Companies"],
+      ["delay", "Delay in Closure"],
+      ["sales", "Sales"],
+      ["core", "Core"]
+    ]
+  };
+  const openDetail = (title, records) => setDetail({ title, records });
+  const updateOverride = (quarterKey, key, value) => {
+    setTargetOverrides(prev => ({ ...prev, [`${quarterKey}:${key}`]: value }));
+  };
+  const renderValueCell = (item, mode, key, label) => {
+    const value = valueFor(item, key, mode);
+    if (editMode && mode === "target" && targetKeys.includes(key)) {
+      return (
+        <input
+          className="target-edit-input"
+          type="number"
+          min="0"
+          value={value}
+          onChange={event => updateOverride(item.quarter.key, key, event.target.value)}
+          aria-label={`${item.quarter.label} ${label}`}
+        />
+      );
+    }
+    return (
+      <button type="button" className="target-count-button" onClick={() => openDetail(`${item.quarter.label} - ${label}`, recordsFor(item, key))}>
+        {value || ""}
+      </button>
+    );
+  };
+  const renderSection = (title, mode) => (
+    <table>
+      <caption>{title}</caption>
+      <thead>
+        <tr>
+          <th>Month wise</th>
+          {columnsByMode[mode].map(([, label]) => <th key={label}>{label}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {sectionRows.map(item => (
+          <tr key={`${mode}-${item.quarter.key}`}>
+            <td>{item.quarter.label}</td>
+            {columnsByMode[mode].map(([key, label]) => <td key={key}>{renderValueCell(item, mode, key, label)}</td>)}
+          </tr>
+        ))}
+        <tr className="grand-total">
+          <td>Grand Total</td>
+          {columnsByMode[mode].map(([key, label]) => (
+            <td key={key}>
+              <button type="button" className="target-count-button total" onClick={() => openDetail(`Grand Total - ${label}`, totalRecords(key))}>
+                {total(key, mode) || ""}
+              </button>
+            </td>
+          ))}
+        </tr>
+      </tbody>
+    </table>
+  );
+
+  return (
+    <section className="dashboard-target-planner">
+      <header>
+        <div>
+          <h3>Target Planner for year {year || selectedYear}</h3>
+          <button type="button" className="target-edit-toggle" onClick={() => setEditMode(value => !value)}>{editMode ? "Done Editing" : "Edit Targets"}</button>
+        </div>
+        <p>Officer-wise planner summary extracted from linked planner rows{selectedBatch !== "ALL" ? ` for batch ${selectedBatch}` : ""}.</p>
+        <strong>Annual Allotted Target of {rows.length} companies to following members: {officerNames || "No officers selected"}</strong>
+      </header>
+      <div className="target-planner-table-wrap">
+        {renderSection("Target Allotted", "target")}
+        {renderSection("Target Achieved", "achieved")}
+        {renderSection("Closure Flow", "stats")}
+      </div>
+      {detail && createPortal(
+        <div className="modal-overlay report-detail-overlay">
+          <section className="target-detail-modal modal-panel">
+            <header>
+              <div>
+                <span className="eyebrow">Planner rows</span>
+                <h3>{detail.title}</h3>
+                <p>{detail.records.length} compan{detail.records.length === 1 ? "y" : "ies"} behind this number.</p>
+              </div>
+              <button type="button" className="soft" onClick={() => setDetail(null)}><X size={17} /> Close</button>
+            </header>
+            <div className="target-detail-table">
+              <table>
+                <thead><tr><th>Company</th><th>Officer</th><th>Lead By</th><th>Category</th><th>Package</th><th>Status</th><th>Selections</th></tr></thead>
+                <tbody>
+                  {detail.records.map(record => (
+                    <tr key={record._id || `${record.companyName}-${record.ron}`}>
+                      <td>{record.companyName || "-"}</td>
+                      <td>{record.placementOfficer || "-"}</td>
+                      <td>{record.leadBy || "-"}</td>
+                      <td>{record.companyCategory || "-"}</td>
+                      <td>{record.packageText || record.packageLpa || "-"}</td>
+                      <td>{record.actualStatus || "-"}</td>
+                      <td>{record.selections || 0}</td>
+                    </tr>
+                  ))}
+                  {!detail.records.length && <tr><td colSpan="7">No company rows are linked to this value.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>,
+        document.body
+      )}
+    </section>
+  );
+}
+
+function PlannerMetric({ label, value, active, onClick }) {
+  return (
+    <button type="button" className={`planner-metric-card ${active ? "active" : ""}`} onClick={onClick}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </button>
+  );
+}
+
+function AuthorityOverview({ summary, records }) {
+  const rows = (records || []).slice(0, 12);
+  const stats = [
+    ["Companies Floated", summary.floated || 0],
+    ["Closed Companies", summary.closed || 0],
+    ["In Process", summary.inProcess || 0],
+    ["Total Selections", summary.selections || 0],
+    ["Highest Package", `${summary.highestPackage || 0} LPA`]
+  ];
+  return (
+    <section className="authority-overview-panel">
+      <div className="authority-stat-grid">
+        {stats.map(([label, value]) => (
+          <article key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </article>
+        ))}
+      </div>
+      <div className="authority-company-table">
+        <header>
+          <div>
+            <span className="eyebrow">Company Overview</span>
+            <h3>Latest placement activity</h3>
+          </div>
+        </header>
+        <div className="authority-table-scroll">
+          <table>
+            <thead>
+              <tr><th>Company</th><th>Job Profile</th><th>Officer</th><th>Package</th><th>Batch</th><th>Status</th><th>Selections</th></tr>
+            </thead>
+            <tbody>
+              {rows.map((record) => (
+                <tr key={record._id}>
+                  <td title={record.companyName}>{record.companyName || "-"}</td>
+                  <td title={record.jobProfile}>{record.jobProfile || "-"}</td>
+                  <td title={record.placementOfficer || record.leadBy}>{record.placementOfficer || record.leadBy || "-"}</td>
+                  <td title={record.packageText}>{record.packageText || `${record.packageLpa || 0} LPA`}</td>
+                  <td>{record.batch || "-"}</td>
+                  <td>{record.actualStatus || "-"}</td>
+                  <td>{record.selections || 0}</td>
+                </tr>
+              ))}
+              {!rows.length && <tr><td colSpan="7">No placement rows found for this authority.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ReportRows({ rows }) {
+  return (
+    <div className="prc-v2-rows">
+      {rows.map(([label, value]) => (
+        <div className="prc-v2-row" key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PlannerRequestsPage() {
+  const [report, setReport] = useState(null);
+  const [message, setMessage] = useState("");
+  const [busyId, setBusyId] = useState("");
+  const [requestSearch, setRequestSearch] = useState("");
+  const [showAllPending, setShowAllPending] = useState(false);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+
+  async function load() {
+    try {
+      setReport(await api("/drives/planner/report"));
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function decideRequest(id, status) {
+    setBusyId(id);
+    setMessage("");
+    try {
+      const result = await api(`/drives/planner/edit-requests/${id}/decision`, { method: "POST", body: JSON.stringify({ status }) });
+      if (result?.blocked) {
+        setMessage(result.message || "Google Sheet write-back was blocked. Request was not approved.");
+        return;
+      }
+      setMessage(status === "APPROVED" ? "Request approved and planner data updated." : "Request rejected.");
+      await load();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  const requests = report?.requests || [];
+  const filteredRequests = requests.filter(item => !requestSearch.trim() || [
+    item.status,
+    item.record?.companyName,
+    item.requester?.name,
+    item.field ? labelFor(item.field) : "",
+    item.currentValue,
+    item.requestedValue,
+    item.reason,
+    formatDateTime(item.createdAt),
+    formatDateTime(item.reviewedAt)
+  ].join(" ").toLowerCase().includes(requestSearch.trim().toLowerCase()));
+  const pending = filteredRequests.filter(item => item.status === "PENDING");
+  const history = filteredRequests.filter(item => item.status !== "PENDING");
+  const pendingVisible = showAllPending ? pending : pending.slice(0, 3);
+  const historyVisible = showAllHistory ? history : history.slice(0, 3);
+  const renderRequest = item => {
+    const companyTitle = item.record?.companyName || item.companyName || item.record?.jobProfile || "";
+    const rowOwner = item.record?.placementOfficer || item.record?.leadBy || item.requester?.name || "planner row";
+    return (
+      <article key={item._id} className="request-history-card">
+        <div>
+          <div className="request-card-topline">
+            <span className={`request-status ${String(item.status || "").toLowerCase()}`}>{item.status}</span>
+            <small>{formatDateTime(item.createdAt)}</small>
+          </div>
+          <h3 title={companyTitle || rowOwner}>{companyTitle || `${labelFor(item.field || "field")} correction`}</h3>
+          {item.field && <div className="request-field-change">
+            <span>{labelFor(item.field)}</span>
+            <strong>{item.currentValue || "-"}</strong>
+            <strong>{item.requestedValue || "-"}</strong>
+          </div>}
+          <p>{item.reason || "No correction note provided."}</p>
+          <small className="request-meta-line">{item.requester?.name || "Manager"} requested this for {rowOwner}{item.reviewedAt ? ` · Reviewed ${formatDateTime(item.reviewedAt)}` : ""}</small>
+        </div>
+        {item.status === "PENDING" && (
+          <div className="request-card-actions">
+            <button onClick={() => decideRequest(item._id, "APPROVED")} disabled={busyId === item._id}>Approve</button>
+            <button className="soft" onClick={() => decideRequest(item._id, "REJECTED")} disabled={busyId === item._id}>Reject</button>
+          </div>
+        )}
+      </article>
+    );
+  };
+
+  return (
+    <>
+      <PageHeader eyebrow="Correction Requests" title="Planner Requests" subtitle="Review manager correction requests and keep a clear decision history" />
+      {message && <ToastMessage toast={{ type: /unable|failed|required|error/i.test(message) ? "error" : "success", message }} onClose={() => setMessage("")} />}
+      <section className="request-search-panel">
+        <label className="planner-history-search"><Search size={16} /><input value={requestSearch} onChange={event => setRequestSearch(event.target.value)} placeholder="Search company, manager, field, status, reason" /></label>
+      </section>
+      <section className="requests-page-grid">
+        <div>
+          <span className="eyebrow">Needs action</span>
+          <h2>Pending requests</h2>
+          <div className="request-list">
+            {pendingVisible.map(renderRequest)}
+            {!pending.length && <EmptyState icon={FileSearch} message="No pending correction requests" />}
+          </div>
+          {pending.length > 3 && (
+            <div className="request-view-more">
+              <button type="button" className="soft" onClick={() => setShowAllPending(value => !value)}>
+                {showAllPending ? "Show less" : `View more (${pending.length - 3})`}
+              </button>
+              <span>Showing {pendingVisible.length} of {pending.length}</span>
+            </div>
+          )}
+        </div>
+        <div>
+          <span className="eyebrow">History</span>
+          <h2>Reviewed requests</h2>
+          <div className="request-list">
+            {historyVisible.map(renderRequest)}
+            {!history.length && <EmptyState icon={ListChecks} message="No reviewed requests yet" />}
+          </div>
+          {history.length > 3 && (
+            <div className="request-view-more">
+              <button type="button" className="soft" onClick={() => setShowAllHistory(value => !value)}>
+                {showAllHistory ? "Show less" : `View more (${history.length - 3})`}
+              </button>
+              <span>Showing {historyVisible.length} of {history.length}</span>
+            </div>
+          )}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canRequest, requests = [], onRequest, onReload }) {
+  const [activeSummary, setActiveSummary] = useState("");
+  const [activeChartDetail, setActiveChartDetail] = useState("");
+  const [summarySearch, setSummarySearch] = useState("");
+  const [detailDrafts, setDetailDrafts] = useState({});
+  const [detailMessage, setDetailMessage] = useState("");
+  const [savingDetailId, setSavingDetailId] = useState("");
+  const [editRequestDraft, setEditRequestDraft] = useState(null);
+  const [requestBusy, setRequestBusy] = useState(false);
+  const rows = group.records || [];
+  const comparisonRows = group.comparisonRecords?.length ? group.comparisonRecords : rows;
+  const s = group.summary || {};
+  const requestFields = [
+    "companyName", "jobProfile", "placementOfficer", "leadBy", "dateFloated", "dateOfDrive", "batch", "actualStatus", "finalSelectionDate",
+    "totalEligible", "totalRegistered", "selections", "packageText", "remarks"
+  ];
+  const requestsByRecord = requests.reduce((map, item) => {
+    const recordId = String(item.record?._id || item.record || "");
+    if (!recordId) return map;
+    (map[recordId] ||= []).push(item);
+    return map;
+  }, {});
+  
+  // Calculate metrics
+  const categoryCount = label => rows.filter(row => String(row.companyCategory || "").toLowerCase().includes(label)).length;
+  const coreCount = categoryCount("core");
+  const salesCount = rows.filter(row => !String(row.companyCategory || "").toLowerCase().includes("core")).length;
+  const totalCategory = coreCount + salesCount || 1;
+  const salesPct = Math.round((salesCount / totalCategory) * 100);
+  const corePct = 100 - salesPct;
+
+  const totalSelections = s.selections || 0;
+  const targetAllotted = rows.length;
+  const overallAchievement = Math.round((s.closed / Math.max(1, targetAllotted)) * 100);
+  
+  const nilSelections = rows.filter(r => r.selections === 0 && r.actualStatus?.toLowerCase().includes("closed")).length;
+  const withSelections = rows.filter(r => r.selections > 0 && r.actualStatus?.toLowerCase().includes("closed")).length;
+  const totalClosed = s.closed || 1;
+  
+  const closureNilPct = Math.round((nilSelections / totalClosed) * 100);
+  const closureWithPct = Math.round((withSelections / totalClosed) * 100);
+  const summarizeRows = (list) => {
+    const closed = list.filter(r => /closed|complete|selected/i.test(r.actualStatus || ""));
+    const sales = list.filter(row => String(row.companyCategory || row.remarks || "").toLowerCase().includes("sales")).length;
+    const core = list.filter(row => String(row.companyCategory || row.remarks || "").toLowerCase().includes("core")).length;
+    const selected = list.reduce((sum, row) => sum + (row.selections || 0), 0);
+    const nil = list.filter(r => r.selections === 0 && /closed|complete|selected/i.test(r.actualStatus || "")).length;
+    const withSel = list.filter(r => r.selections > 0 && /closed|complete|selected/i.test(r.actualStatus || "")).length;
+    const closedCount = closed.length || 1;
+    return {
+      floated: list.length,
+      closed: closed.length,
+      selected,
+      sales,
+      core,
+      nil,
+      withSel,
+      target: list.length,
+      achievedPct: Math.round((closed.length / Math.max(1, list.length)) * 100),
+      nilPct: Math.round((nil / closedCount) * 100),
+      withPct: Math.round((withSel / closedCount) * 100)
+    };
+  };
+  const batchNumber = value => {
+    const matches = String(value || "").match(/20\d{2}/g) || [];
+    return matches.length ? Number(matches[matches.length - 1]) : 0;
+  };
+  const rowBatchName = row => String(row.batch || row.academicYear || "").trim();
+  const activeBatchFromYear = value => {
+    const matches = String(value || "").match(/20\d{2}/g) || [];
+    return matches.length ? matches[matches.length - 1] : "";
+  };
+  const batchNames = [...new Set(comparisonRows.map(rowBatchName).filter(Boolean))]
+    .sort((a, b) => batchNumber(b) - batchNumber(a) || a.localeCompare(b, undefined, { numeric: true }));
+  const selectedBatchYear = selectedBatch !== "ALL" ? activeBatchFromYear(selectedBatch) : "";
+  const activeBatch = selectedBatchYear || activeBatchFromYear(year);
+  const batchOneName = (activeBatch && batchNames.find(name => batchNumber(name) === Number(activeBatch))) || batchNames[0] || activeBatch || "";
+  const batchTwoName = batchNames.find(name => name !== batchOneName && batchNumber(name) < batchNumber(batchOneName))
+    || batchNames.find(name => name !== batchOneName)
+    || "";
+  const batchTitle = value => String(value).toLowerCase().startsWith("batch") ? String(value).toUpperCase() : `BATCH ${value}`;
+  const batchOneRows = comparisonRows.filter(row => batchNumber(rowBatchName(row)) === batchNumber(batchOneName));
+  const batchTwoRows = comparisonRows.filter(row => batchNumber(rowBatchName(row)) === batchNumber(batchTwoName));
+  const batchOne = summarizeRows(batchOneRows.length ? batchOneRows : rows.filter(row => batchNumber(rowBatchName(row)) === batchNumber(batchOneName)));
+  const batchTwo = summarizeRows(batchTwoRows);
+  const hasPastBatch = Boolean(batchTwoName);
+  const pctOfMax = value => `${Math.max(5, Math.min(100, Math.round((Number(value || 0) / Math.max(1, targetAllotted, totalSelections, s.floated || 0)) * 100)))}%`;
+  const metricSeries = [
+    { key: "overall", label: "Overall Since Inception", className: "dark", data: { target: targetAllotted, floated: s.floated || 0, closed: s.closed || 0, selected: totalSelections, sales: salesCount, core: coreCount, achievedPct: overallAchievement, nilPct: closureNilPct, withPct: closureWithPct } },
+    { key: "batch-one", label: batchOneName || "Selected Batch", className: "mid", data: batchOne },
+    ...(hasPastBatch ? [{ key: "batch-two", label: batchTwoName, className: "light", data: batchTwo }] : [])
+  ];
+  const performanceMetrics = [
+    ["Target", "target"],
+    ["Overall Companies", "floated"],
+    ["Closed", "closed"],
+    ["Selected Students", "selected"],
+    ["Sales Selections", "sales"],
+    ["Core Selections", "core"]
+  ];
+  const closureMetrics = [
+    ["Closed Target Achieved", "achievedPct"],
+    ["Closure Nil Selection %", "nilPct"],
+    ["Closure with Selection %", "withPct"]
+  ];
+  const activeChartTitle = activeChartDetail === "performance" ? "Performance Overview" : activeChartDetail === "closure" ? "Closure Performance" : "";
+  const salesInsight = salesCount >= coreCount ? "Sales-led performance" : "Core-led performance";
+  const summaryCards = [
+    {
+      key: "target",
+      icon: Crop,
+      value: targetAllotted,
+      label: "Target",
+      text: "Annual placement target set for overall companies.",
+      filter: record => record,
+      note: `${targetAllotted} total planner rows are counted as the current target set.`
+    },
+    {
+      key: "achievement",
+      icon: BriefcaseBusiness,
+      value: `${overallAchievement}%`,
+      label: "Overall Achievement",
+      text: `${s.closed || 0} companies closed against the target.`,
+      filter: record => /closed|complete|selected/i.test(record.actualStatus || ""),
+      note: `${s.closed || 0} closed companies out of ${targetAllotted || 0} target rows.`
+    },
+    {
+      key: "students",
+      icon: GraduationCap,
+      value: totalSelections,
+      label: "Students Selected",
+      text: "Strong student interest and engagement.",
+      filter: record => Number(record.selections || 0) > 0,
+      note: `${totalSelections} total selections from rows where selections are greater than zero.`
+    },
+    {
+      key: "sales",
+      icon: Users,
+      value: salesCount,
+      label: "Sales Selections",
+      text: "Primary strength in sales domain placements.",
+      filter: record => !String(record.companyCategory || "").toLowerCase().includes("core"),
+      note: `${salesCount} rows are treated as sales/non-core placement rows.`
+    },
+    {
+      key: "core",
+      icon: ShieldCheck,
+      value: coreCount,
+      label: "Core Selections",
+      text: "Focused effort on high-potential core opportunities.",
+      filter: record => String(record.companyCategory || "").toLowerCase().includes("core"),
+      note: `${coreCount} rows are marked as core placement opportunities.`
+    }
+  ];
+  const activeSummaryCard = summaryCards.find(card => card.key === activeSummary);
+  const summaryRows = activeSummaryCard
+    ? rows
+      .filter(activeSummaryCard.filter)
+      .filter(record => [record.companyName, record.jobProfile, record.placementOfficer, record.leadBy, record.actualStatus, record.batch].join(" ").toLowerCase().includes(summarySearch.toLowerCase()))
+    : [];
+  const detailField = (record, key) => detailDrafts[record._id]?.[key] ?? (record[key] ?? "");
+  const detailInput = (record, key, type = "text") => (
+    <input
+      type={type}
+      title={String(detailField(record, key) || "")}
+      value={detailField(record, key)}
+      onChange={event => updateDetailDraft(record, key, event.target.value)}
+      onKeyDown={event => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          saveDetailRecord(record);
+        }
+      }}
+    />
+  );
+  const updateDetailDraft = (record, key, value) => {
+    setDetailDrafts(prev => ({ ...prev, [record._id]: { ...(prev[record._id] || {}), [key]: value } }));
+  };
+  const saveDetailRecord = async (record) => {
+    const changes = detailDrafts[record._id];
+    if (!changes) return;
+    setSavingDetailId(record._id);
+    setDetailMessage("");
+    try {
+      const result = await api(`/drives/planner/records/${record._id}`, { method: "PATCH", body: JSON.stringify(changes) });
+      if (result?.blocked) {
+        setDetailMessage(result.message || "Google Sheet write-back was blocked. App data was not changed.");
+        return;
+      }
+      setDetailDrafts(prev => {
+        const next = { ...prev };
+        delete next[record._id];
+        return next;
+      });
+      setDetailMessage(`Saved ${record.companyName || "planner row"}`);
+      await onReload?.();
+    } catch (error) {
+      setDetailMessage(error.message);
+    } finally {
+      setSavingDetailId("");
+    }
+  };
+  const openEditRequest = (record) => {
+    const field = "companyName";
+    setEditRequestDraft({
+      record,
+      field,
+      currentValue: String(record[field] ?? ""),
+      requestedValue: "",
+      reason: ""
+    });
+  };
+  const changeRequestField = (field) => {
+    setEditRequestDraft(prev => ({ ...prev, field, currentValue: String(prev.record?.[field] ?? ""), requestedValue: "" }));
+  };
+  const submitEditRequest = async (event) => {
+    event.preventDefault();
+    if (!editRequestDraft?.record) return;
+    setRequestBusy(true);
+    try {
+      await onRequest?.(editRequestDraft.record, {
+        field: editRequestDraft.field,
+        currentValue: editRequestDraft.currentValue,
+        requestedValue: editRequestDraft.requestedValue,
+        reason: editRequestDraft.reason
+      });
+      setEditRequestDraft(null);
+    } finally {
+      setRequestBusy(false);
+    }
+  };
+
+  return (
+    <article className="prc-v2-container">
+      {/* HEADER */}
+      <header className="prc-v2-header">
+        <div className="prc-v2-header-left">
+          <div className="prc-v2-avatar">
+            <UserCog size={36} color="white" />
+          </div>
+          <div className="prc-v2-title">
+            <h2>{group.name}</h2>
+            <p>Placement Performance Dashboard</p>
+          </div>
+        </div>
+        <div className="prc-v2-header-right">
+          <Calendar size={18} />
+          <span>Data as on {new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span>
+        </div>
+      </header>
+
+      {/* PROFESSIONAL SUMMARY */}
+      <div className="prc-v2-section-header">PROFESSIONAL SUMMARY</div>
+      <div className="prc-v2-summary-row">
+        {summaryCards.map(card => {
+          const Icon = card.icon;
+          return (
+            <button
+              type="button"
+              key={card.key}
+              className={`prc-v2-summary-box ${activeSummary === card.key ? "active" : ""}`}
+              data-tooltip={`Calculated from planner rows: ${card.note}`}
+              title={`Calculated from planner rows: ${card.note}`}
+              onClick={() => setActiveSummary(activeSummary === card.key ? "" : card.key)}
+            >
+              <div className="prc-v2-summary-icon"><Icon size={24} /></div>
+              <strong>{card.value}</strong>
+              <span>{card.label}</span>
+              <p>{card.text}</p>
+            </button>
+          );
+        })}
+      </div>
+      {activeSummaryCard && createPortal(
+        <div className="modal-overlay report-detail-overlay">
+          <section className="report-summary-detail modal-panel">
+          <header>
+            <div>
+              <span className="eyebrow">Report details</span>
+              <h3>{activeSummaryCard.label}</h3>
+              <p>{activeSummaryCard.note}</p>
+            </div>
+            <label className="stat-search"><Search size={16} /><input value={summarySearch} onChange={event => setSummarySearch(event.target.value)} placeholder="Search company, officer, batch, status" /></label>
+            <button type="button" className="soft report-detail-close" onClick={() => { setActiveSummary(""); setSummarySearch(""); }}><X size={17} /> Close</button>
+          </header>
+          {detailMessage && <div className={`notice ${/blocked|failed|unable|not changed/i.test(detailMessage) ? "error-notice" : "success-notice"}`}>{detailMessage}</div>}
+          <div className="report-detail-kpis">
+            <article><span>{activeSummaryCard.label}</span><strong>{activeSummaryCard.value}</strong></article>
+            <article><span>Total rows shown</span><strong>{summaryRows.length}</strong></article>
+            <article><span>Total selections</span><strong>{summaryRows.reduce((sum, record) => sum + Number(record.selections || 0), 0)}</strong></article>
+            <article><span>Closed rows</span><strong>{summaryRows.filter(record => /closed|complete|selected/i.test(record.actualStatus || "")).length}</strong></article>
+          </div>
+          <div className="stat-detail-table">
+            <table>
+              <thead><tr><th>Company</th><th>Job Profile</th><th>Officer</th><th>Lead By</th><th>Batch</th><th>Status</th><th>Eligible</th><th>Registered</th><th>Selections</th><th>Package</th><th>Remarks</th>{(canEdit || canRequest) && <th>Action / Request</th>}</tr></thead>
+              <tbody>
+                {summaryRows.map(record => {
+                  const recordRequests = requestsByRecord[String(record._id)] || [];
+                  const latestRequest = recordRequests[0];
+                  return (
+                    <tr key={record._id}>
+                      <td title={record.companyName || "-"}>{canEdit ? detailInput(record, "companyName") : (record.companyName || "-")}</td>
+                      <td title={record.jobProfile || "-"}>{canEdit ? detailInput(record, "jobProfile") : (record.jobProfile || "-")}</td>
+                      <td title={record.placementOfficer || "-"}>{canEdit ? detailInput(record, "placementOfficer") : (record.placementOfficer || "-")}</td>
+                      <td title={record.leadBy || "-"}>{canEdit ? detailInput(record, "leadBy") : (record.leadBy || "-")}</td>
+                      <td title={record.batch || "-"}>{canEdit ? detailInput(record, "batch") : (record.batch || "-")}</td>
+                      <td title={record.actualStatus || "-"}>{canEdit ? detailInput(record, "actualStatus") : (record.actualStatus || "-")}</td>
+                      <td title={String(record.totalEligible || 0)}>{canEdit ? detailInput(record, "totalEligible", "number") : (record.totalEligible || 0)}</td>
+                      <td title={String(record.totalRegistered || 0)}>{canEdit ? detailInput(record, "totalRegistered", "number") : (record.totalRegistered || 0)}</td>
+                      <td title={String(record.selections || 0)}>{canEdit ? detailInput(record, "selections", "number") : (record.selections || 0)}</td>
+                      <td title={record.packageText || String(record.packageLpa || "-")}>{canEdit ? detailInput(record, "packageText") : (record.packageText || record.packageLpa || "-")}</td>
+                      <td title={record.remarks || "-"}>{canEdit ? detailInput(record, "remarks") : (record.remarks || "-")}</td>
+                      {canEdit && <td><button className="detail-save-btn" disabled={!detailDrafts[record._id] || savingDetailId === record._id} onClick={() => saveDetailRecord(record)}><Save size={14} /> {savingDetailId === record._id ? "Saving" : "Save"}</button></td>}
+                      {canRequest && <td className="request-action-cell">
+                        {latestRequest && <span className={`request-status ${String(latestRequest.status || "").toLowerCase()}`}>{latestRequest.status} {latestRequest.field ? `· ${labelFor(latestRequest.field)}` : ""}</span>}
+                        <button type="button" className="soft detail-request-btn" onClick={() => openEditRequest(record)}><FileSearch size={14} /> Request Edit</button>
+                      </td>}
+                    </tr>
+                  );
+                })}
+                {!summaryRows.length && <tr><td colSpan={(canEdit || canRequest) ? 12 : 11}>No rows found for this report stat.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          </section>
+        </div>,
+        document.body
+      )}
+
+      {editRequestDraft && createPortal(
+        <div className="modal-overlay edit-request-overlay">
+          <section className="edit-request-modal modal-panel">
+            <header>
+              <div>
+                <span className="eyebrow">Edit request</span>
+                <h3>{editRequestDraft.record.companyName || "Planner row"}</h3>
+                <p>Request a change to one specific field. The Head can approve or reject it from Requests.</p>
+              </div>
+              <button type="button" className="icon-button soft" onClick={() => setEditRequestDraft(null)} aria-label="Close request"><X size={18} /></button>
+            </header>
+            <form onSubmit={submitEditRequest}>
+              <label>Field to change
+                <select value={editRequestDraft.field} onChange={event => changeRequestField(event.target.value)}>
+                  {requestFields.map(field => <option key={field} value={field}>{labelFor(field)}</option>)}
+                </select>
+              </label>
+              <label>Current value
+                <input value={editRequestDraft.currentValue} readOnly />
+              </label>
+              <label>Requested value
+                <input value={editRequestDraft.requestedValue} onChange={event => setEditRequestDraft(prev => ({ ...prev, requestedValue: event.target.value }))} placeholder="Enter the corrected value" required />
+              </label>
+              <label>Reason
+                <textarea value={editRequestDraft.reason} onChange={event => setEditRequestDraft(prev => ({ ...prev, reason: event.target.value }))} placeholder="Explain why this field should be changed" required minLength={5} />
+              </label>
+              <div className="edit-request-actions">
+                <button disabled={requestBusy}>{requestBusy ? "Sending..." : "Send Request"}</button>
+                <button type="button" className="soft" onClick={() => setEditRequestDraft(null)}>Cancel</button>
+              </div>
+            </form>
+          </section>
+        </div>,
+        document.body
+      )}
+
+      {activeChartDetail && createPortal(
+        <div className="modal-overlay report-detail-overlay">
+          <section className="report-chart-detail modal-panel">
+            <header>
+              <div>
+                <span className="eyebrow">Report chart</span>
+                <h3>{activeChartTitle}</h3>
+                <p>{hasPastBatch ? "Comparing overall, selected batch, and past batch planner data." : "No past batch rows were found, so this detail uses only available planner data."}</p>
+              </div>
+              <button type="button" className="soft report-detail-close" onClick={() => setActiveChartDetail("")}><X size={17} /> Close</button>
+            </header>
+            <div className="report-chart-kpis">
+              {metricSeries.map(series => (
+                <article key={series.key}>
+                  <span>{series.label}</span>
+                  <strong>{series.data.closed || 0}</strong>
+                  <small>closed of {series.data.target || 0} target rows</small>
+                </article>
+              ))}
+            </div>
+            <div className="report-chart-detail-grid">
+              {(activeChartDetail === "performance" ? performanceMetrics : closureMetrics).map(([label, key]) => (
+                <article key={key} className="report-chart-detail-card">
+                  <h4>{label}</h4>
+                  <div className="report-chart-bars">
+                    {metricSeries.map(series => (
+                      <div key={series.key}>
+                        <span>{series.label}</span>
+                        <div className="report-chart-track">
+                          <b className={series.className} style={{ width: activeChartDetail === "performance" ? pctOfMax(series.data[key]) : `${Math.min(100, Math.max(0, Number(series.data[key] || 0)))}%` }} />
+                        </div>
+                        <strong>{series.data[key] || 0}{activeChartDetail === "closure" ? "%" : ""}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>,
+        document.body
+      )}
+
+      {/* REPORT CARD */}
+      <div className="prc-v2-report-grid">
+        {/* OVERALL PERFORMANCE */}
+        <div className="prc-v2-report-col">
+          <div className="prc-v2-section-header dark">OVERALL PERFORMANCE SINCE INCEPTION</div>
+          <ReportRows rows={[
+            ["Target", targetAllotted],
+            ["Overall Companies", s.floated || 0],
+            ["Closed", s.closed || 0],
+            ["Closed Target Achieved", `${overallAchievement}%`],
+            ["Closure Nil Selection %", `${closureNilPct}%`],
+            ["Closure with Selection %", `${closureWithPct}%`],
+            ["Company closed with Nil Selections", nilSelections],
+            ["Companies with Selection", withSelections],
+            ["Selected students", totalSelections],
+            ["Core Companies", coreCount],
+            ["Sales companies", salesCount]
+          ]} />
+        </div>
+
+        {/* BATCH 2026 */}
+        <div className="prc-v2-report-col">
+          <div className="prc-v2-section-header dark">{batchTitle(batchOneName)}</div>
+          <ReportRows rows={[
+            ["Target @12 companies per month", batchOne.target],
+            ["Overall Companies", batchOne.floated],
+            ["Closed", batchOne.closed],
+            ["Closed Target Achieved", `${batchOne.achievedPct}%`],
+            ["Closure Nil Selection %", `${batchOne.nilPct}%`],
+            ["Closure with Selection %", `${batchOne.withPct}%`],
+            ["Company closed with Nil Selections", batchOne.nil],
+            ["Companies with Selection", batchOne.withSel],
+            ["Selected students", batchOne.selected],
+            ["Core Companies", batchOne.core],
+            ["Sales companies", batchOne.sales]
+          ]} />
+        </div>
+
+        {/* BATCH 2 */}
+        <div className="prc-v2-report-col">
+          <div className="prc-v2-section-header dark">{batchTwoName ? batchTitle(batchTwoName) : "PAST BATCH"}</div>
+          <div className="prc-v2-batch-info">
+            <Calendar size={20} />
+            <div>
+              <strong>{batchTwoName || "No past batch rows"}</strong>
+              <p>{batchTwoName ? "Calculated from rows matched with this officer in the planner sheet." : "No comparison batch rows are available in the selected planner data."}</p>
+            </div>
+          </div>
+          {hasPastBatch ? <ReportRows rows={[
+            ["Target @12 companies per month", batchTwo.target],
+            ["Overall Companies", batchTwo.floated],
+            ["Closed", batchTwo.closed],
+            ["Closed Target Achieved", `${batchTwo.achievedPct}%`],
+            ["Closure Nil Selection %", `${batchTwo.nilPct}%`],
+            ["Closure with Selection %", `${batchTwo.withPct}%`],
+            ["Company closed with Nil Selections", batchTwo.nil],
+            ["Companies with Selection", batchTwo.withSel],
+            ["Selected students", batchTwo.selected],
+            ["Core Companies", batchTwo.core],
+            ["Sales companies", batchTwo.sales]
+          ]} /> : <EmptyState icon={Calendar} message="No past batch data available for this manager" />}
+        </div>
+      </div>
+
+      {/* CHARTS ROW */}
+      <div className="prc-v2-charts-row">
+        {/* PERFORMANCE OVERVIEW */}
+        <div className="prc-v2-perf-overview">
+          <div className="prc-v2-section-header">PERFORMANCE OVERVIEW</div>
+          <button type="button" className="prc-v2-chart-open" onClick={() => setActiveChartDetail("performance")} aria-label="Open performance overview details">
+          <div className="prc-v2-bar-chart-container">
+            {/* Simple CSS-based bar chart approximation */}
+            <div className="prc-v2-legend">
+              <span><div className="box dark"></div> Overall Since Inception</span>
+              <span><div className="box mid"></div> {batchOneName}</span>
+              {hasPastBatch && <span><div className="box light"></div> {batchTwoName}</span>}
+            </div>
+            <div className="prc-v2-bars">
+              <div className="bar-group">
+                <div className="bar dark" style={{height: pctOfMax(targetAllotted)}}><span>{targetAllotted}</span></div>
+                <div className="bar mid" style={{height: pctOfMax(batchOne.target)}}><span>{batchOne.target}</span></div>
+                {hasPastBatch && <div className="bar light" style={{height: pctOfMax(batchTwo.target)}}><span>{batchTwo.target}</span></div>}
+                <label>Target</label>
+              </div>
+              <div className="bar-group">
+                <div className="bar dark" style={{height: pctOfMax(s.floated)}}><span>{s.floated || 0}</span></div>
+                <div className="bar mid" style={{height: pctOfMax(batchOne.floated)}}><span>{batchOne.floated}</span></div>
+                {hasPastBatch && <div className="bar light" style={{height: pctOfMax(batchTwo.floated)}}><span>{batchTwo.floated}</span></div>}
+                <label>Overall Companies</label>
+              </div>
+              <div className="bar-group">
+                <div className="bar dark" style={{height: pctOfMax(s.closed)}}><span>{s.closed || 0}</span></div>
+                <div className="bar mid" style={{height: pctOfMax(batchOne.closed)}}><span>{batchOne.closed}</span></div>
+                {hasPastBatch && <div className="bar light" style={{height: pctOfMax(batchTwo.closed)}}><span>{batchTwo.closed}</span></div>}
+                <label>Closed</label>
+              </div>
+              <div className="bar-group">
+                <div className="bar dark" style={{height: pctOfMax(totalSelections)}}><span>{totalSelections}</span></div>
+                <div className="bar mid" style={{height: pctOfMax(batchOne.selected)}}><span>{batchOne.selected}</span></div>
+                {hasPastBatch && <div className="bar light" style={{height: pctOfMax(batchTwo.selected)}}><span>{batchTwo.selected}</span></div>}
+                <label>Selected Students</label>
+              </div>
+              <div className="bar-group">
+                <div className="bar dark" style={{height: pctOfMax(salesCount)}}><span>{salesCount}</span></div>
+                <div className="bar mid" style={{height: pctOfMax(batchOne.sales)}}><span>{batchOne.sales}</span></div>
+                {hasPastBatch && <div className="bar light" style={{height: pctOfMax(batchTwo.sales)}}><span>{batchTwo.sales}</span></div>}
+                <label>Sales Selections</label>
+              </div>
+              <div className="bar-group">
+                <div className="bar dark" style={{height: pctOfMax(coreCount)}}><span>{coreCount}</span></div>
+                <div className="bar mid" style={{height: pctOfMax(batchOne.core)}}><span>{batchOne.core}</span></div>
+                {hasPastBatch && <div className="bar light" style={{height: pctOfMax(batchTwo.core)}}><span>{batchTwo.core}</span></div>}
+                <label>Core Selections</label>
+              </div>
+            </div>
+            <p className="prc-v2-perf-footer"><CheckCircle2 size={14}/> Performance is calculated from the selected manager's uploaded planner rows.</p>
+          </div>
+          </button>
+        </div>
+
+        {/* CLOSURE PERFORMANCE */}
+        <button type="button" className="prc-v2-closure-perf prc-v2-chart-open" onClick={() => setActiveChartDetail("closure")} aria-label="Open closure performance details">
+          <div className="prc-v2-section-header">CLOSURE PERFORMANCE (%)</div>
+          <div className="prc-v2-legend">
+            <span><div className="box dark"></div> Overall Since Inception</span>
+            <span><div className="box mid"></div> {batchOneName}</span>
+            {hasPastBatch && <span><div className="box light"></div> {batchTwoName}</span>}
+          </div>
+          <div className="prc-v2-donuts">
+            <div className="donut-col">
+              <div className="donut dark" style={{'--pct': overallAchievement}}><span>{overallAchievement}%</span></div>
+              <label>Closed Target Achieved</label>
+            </div>
+            <div className="donut-col">
+              <div className="donut dark" style={{'--pct': closureNilPct}}><span>{closureNilPct}%</span></div>
+              <label>Closure Nil Selection %</label>
+            </div>
+            <div className="donut-col">
+              <div className="donut dark" style={{'--pct': closureWithPct}}><span>{closureWithPct}%</span></div>
+              <label>Closure with Selection %</label>
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {/* BOTTOM ROW */}
+      <div className="prc-v2-bottom-row">
+        {/* SALES VS CORE */}
+        <div className="prc-v2-sales-core">
+          <div className="prc-v2-section-header">SALES VS CORE FOCUS</div>
+          <div className="prc-v2-sales-core-content">
+            <div className="donut-row">
+              <div className="donut-wrap">
+                <div className="donut dark" style={{'--pct': salesPct}}><span>{salesPct}%</span></div>
+                <div className="label-wrap">
+                  <strong>{salesCount}</strong>
+                  <span>Companies</span>
+                </div>
+              </div>
+              <div className="donut-info">
+                <strong>Sales Companies</strong>
+                <p>Primary strength and key focus area</p>
+              </div>
+            </div>
+            <div className="donut-row">
+              <div className="donut-wrap">
+                <div className="donut mid" style={{'--pct': corePct}}><span>{corePct}%</span></div>
+                <div className="label-wrap">
+                  <strong>{coreCount}</strong>
+                  <span>Companies</span>
+                </div>
+              </div>
+              <div className="donut-info">
+                <strong>Core Companies</strong>
+                <p>Selective focus on high-potential core opportunities</p>
+              </div>
+            </div>
+          </div>
+          <div className="prc-v2-footer-note">
+            <CheckCircle2 size={14}/> Focus on Better Closures. Leverage Sales Strength. Build Core Opportunities. Deliver Consistent Results.
+          </div>
+        </div>
+
+        {/* HIGHLIGHTS */}
+        <div className="prc-v2-highlights">
+          <div className="prc-v2-section-header">KEY HIGHLIGHTS</div>
+          <ul className="prc-v2-list">
+            <li><CheckCircle2 size={16}/> <div><strong>{salesInsight}:</strong><br/>{salesCount} sales companies and {coreCount} core companies.</div></li>
+            <li><Info size={16}/> <div><strong>{s.closed || 0} companies closed</strong><br/>out of {s.floated || 0} floated companies.</div></li>
+            <li><Info size={16}/> <div><strong>{closureNilPct}% nil-selection closure</strong><br/>needs attention for better conversion.</div></li>
+            <li><Users size={16}/> <div><strong>{totalSelections} total selections.</strong><br/>Focus remains on consistent quality placements.</div></li>
+          </ul>
+        </div>
+
+        {/* ACTION PLAN */}
+        <div className="prc-v2-action-plan">
+          <div className="prc-v2-section-header dark">KEY TAKEAWAYS & ACTION PLAN</div>
+          <ul className="prc-v2-list dark">
+            <li><CheckCircle2 size={16}/> <div>Increase closure with selection % by stronger student readiness and engagement.</div></li>
+            <li><CheckCircle2 size={16}/> <div>Reduce companies closed with nil selections through better pre-qualification.</div></li>
+            <li><CheckCircle2 size={16}/> <div>Continue leveraging strength in Sales domain and expand high-converting opportunities.</div></li>
+            <li><CheckCircle2 size={16}/> <div>Build and nurture long-term relationships in Core domain for quality placements.</div></li>
+            <li><CheckCircle2 size={16}/> <div>Focus on consistent follow-ups to improve closure percentages.</div></li>
+          </ul>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function DriveWisePage({ user, initialTab = "drives" }) {
   const [drives, setDrives] = useState([]);
   const [placementOfficers, setPlacementOfficers] = useState([]);
@@ -1760,7 +3811,7 @@ function DriveWisePage({ user, initialTab = "drives" }) {
     <>
       <PageHeader 
         eyebrow="Drive Workflow" 
-        title={isMaker ? "Upload Drive Sheet" : selectedOfficer ? `${selectedOfficer.name}'s Drives` : "Drives & Reports"}
+        title={isMaker ? "Upload Placement Sheet" : selectedOfficer ? `${selectedOfficer.name}'s Placement Data` : "Planner & Placement Reports"}
         subtitle={isMaker
           ? "Upload one attendance sheet; drives are created automatically from the Company column"
           : selectedOfficer
@@ -2204,7 +4255,7 @@ function DriveWisePage({ user, initialTab = "drives" }) {
 
                 <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
                   <textarea 
-                    placeholder="Enter HOD remarks/feedback (optional)..." 
+                    placeholder="Enter Head remarks/feedback (optional)..."
                     value={decisionNotes[req._id] || ""} 
                     onChange={(e) => setDecisionNotes({ ...decisionNotes, [req._id]: e.target.value })}
                     rows={2}
@@ -2234,7 +4285,7 @@ function DriveWisePage({ user, initialTab = "drives" }) {
                     <th style={{ padding: "8px", textAlign: "left" }}>Type</th>
                     <th style={{ padding: "8px", textAlign: "center" }}>Status</th>
                     <th style={{ padding: "8px", textAlign: "left" }}>Reason</th>
-                    <th style={{ padding: "8px", textAlign: "left" }}>HOD Remarks</th>
+                    <th style={{ padding: "8px", textAlign: "left" }}>Head Remarks</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2311,7 +4362,7 @@ function ToastMessage({ toast, onClose }) {
   );
 }
 
-function ConfirmDialog({ title, message, confirmLabel = "Confirm", cancelLabel = "Cancel", onConfirm, onCancel, onDone, onError }) {
+function ConfirmDialog({ title, message, confirmLabel = "Confirm", cancelLabel = "Cancel", icon: Icon = Trash2, onConfirm, onCancel, onDone, onError }) {
   const [busy, setBusy] = useState(false);
 
   async function runConfirm() {
@@ -2330,7 +4381,7 @@ function ConfirmDialog({ title, message, confirmLabel = "Confirm", cancelLabel =
   return createPortal(
     <div className="app-dialog-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
       <div className="app-dialog confirm-dialog">
-        <div className="confirm-dialog-icon" aria-hidden="true"><Trash2 size={22} /></div>
+        <div className="confirm-dialog-icon" aria-hidden="true"><Icon size={22} /></div>
         <div className="confirm-dialog-copy">
           <h3 id="confirm-dialog-title">{title}</h3>
           <p>{message}</p>
@@ -2469,7 +4520,7 @@ function DriveCard({ drive, user, refresh, requests = [], onDelete, selected = f
         method: "POST",
         body: JSON.stringify({ driveId: drive._id, type: "REUPLOAD_SHEET", reason: "Placement Officer requested permission to re-upload the attendance sheet." })
       });
-      setCardMessage("Re-upload request sent to HOD.");
+      setCardMessage("Re-upload request sent to Head.");
       refresh();
     } catch (err) {
       setCardMessage(`Unable to request re-upload: ${err.message}`);
@@ -2523,7 +4574,7 @@ function DriveCard({ drive, user, refresh, requests = [], onDelete, selected = f
             />
           ) : hasPendingReupload ? (
             <button className="soft font-medium" disabled style={{ marginBottom: "10px", width: "100%", cursor: "not-allowed", opacity: 0.7 }}>
-              Re-upload Pending HOD Approval
+              Re-upload Pending Head Approval
             </button>
           ) : (
             <button className="soft warning-action font-medium" onClick={requestReupload} style={{ marginBottom: "10px", width: "100%", color: "var(--orange)" }}>
@@ -2934,7 +4985,7 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
           updatedRows: rows
         })
       });
-      setMessage("Edit approval request submitted to HOD successfully!");
+      setMessage("Edit approval request submitted to Head successfully!");
       setReason("");
       setTimeout(() => {
         setShowRequestForm(false);
@@ -3027,11 +5078,11 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
         <div className="sheet-preview-modal-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <h3 style={{ margin: 0 }}>{title}</h3>
-            {requireApproval && <p className="subtle" style={{ margin: "4px 0 0 0", fontSize: "12px" }}>Edit cells and click 'Request HOD Approval' when finished.</p>}
+            {requireApproval && <p className="subtle" style={{ margin: "4px 0 0 0", fontSize: "12px" }}>Edit cells and click 'Request Head Approval' when finished.</p>}
           </div>
           <div style={{ display: "flex", gap: "10px" }}>
             {requireApproval && hasChanges && !showRequestForm && (
-              <button onClick={() => setShowRequestForm(true)} style={{ background: "var(--orange)", color: "white" }}>Request HOD Approval</button>
+              <button onClick={() => setShowRequestForm(true)} style={{ background: "var(--orange)", color: "white" }}>Request Head Approval</button>
             )}
             <button className="soft" onClick={onClose}><X size={17} /> Close</button>
           </div>
@@ -3039,7 +5090,7 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
 
         {showRequestForm && (
           <div className="request-reason-banner" style={{ background: "var(--orange-bg)", padding: "14px", borderBottom: "1px solid var(--line)", textAlign: "left" }}>
-            <h4 style={{ margin: "0 0 6px 0", color: "var(--orange)", fontSize: "14px" }}>HOD Approval Required for Edits</h4>
+            <h4 style={{ margin: "0 0 6px 0", color: "var(--orange)", fontSize: "14px" }}>Head Approval Required for Edits</h4>
             <p style={{ margin: "0 0 10px 0", fontSize: "12px" }}>Please explain why these modifications are needed. Edits will be applied once approved.</p>
             <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
               <input 
@@ -3049,7 +5100,7 @@ function SheetPreviewModal({ title, headers, rows: initialRows, editable = false
                 onChange={(e) => setReason(e.target.value)} 
                 style={{ flex: 1, padding: "8px", fontSize: "13px" }}
               />
-              <button onClick={submitEditRequest} disabled={busy || !reason.trim()}>{busy ? "Submitting..." : "Submit to HOD"}</button>
+              <button onClick={submitEditRequest} disabled={busy || !reason.trim()}>{busy ? "Submitting..." : "Submit to Head"}</button>
               <button className="soft" onClick={() => setShowRequestForm(false)}>Cancel</button>
             </div>
             {message && <p style={{ margin: "6px 0 0 0", fontSize: "12px", fontWeight: "bold" }}>{message}</p>}
@@ -3205,7 +5256,7 @@ function StudentRequestsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Student Data Governance" title="Student Correction Requests" subtitle="Verify proof, review requested values, and control updates to master data">
+      <PageHeader eyebrow="Request Centre" title="Requests" subtitle="Review placement data, supporting proof, and pending update requests">
         <button className="soft" onClick={load}><RefreshCcw size={17} /> Refresh</button>
       </PageHeader>
       {message && <div className={message.includes("successfully") ? "notice" : "notice error"}>{message}</div>}
@@ -3240,7 +5291,7 @@ function StudentRequestsPage() {
             </div>
             {request.status === "PENDING" ? (
               <div className="student-request-decision">
-                <label>HOD remarks
+                <label>Head remarks
                   <textarea rows={2} value={remarks[request._id] || ""} onChange={(event) => setRemarks({ ...remarks, [request._id]: event.target.value })} placeholder="Add verification notes or rejection reason" />
                 </label>
                 <button className="soft danger-action" disabled={busyId === request._id} onClick={() => decide(request._id, "REJECTED")}>Reject</button>
@@ -3248,7 +5299,7 @@ function StudentRequestsPage() {
               </div>
             ) : (
               <div className="student-request-review">
-                <span>Reviewed by {request.reviewedBy?.name || "HOD"} on {formatDateTime(request.reviewedAt)}</span>
+                <span>Reviewed by {request.reviewedBy?.name || "Head"} on {formatDateTime(request.reviewedAt)}</span>
                 <span>Sheet write-back: <strong>{request.writeBackStatus}</strong></span>
                 {request.hodRemarks && <p>{request.hodRemarks}</p>}
               </div>
@@ -3263,14 +5314,46 @@ function StudentRequestsPage() {
 function ProfilePage({ user }) {
   const { updateProfile, uploadProfilePhoto } = useAuth();
   const [form, setForm] = useState({ name: user.name || "", designation: user.designation || "", email: user.email || "", personalEmail: user.personalEmail || "", phone: user.phone || "", profileImage: user.profileImage || "" });
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
   const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState("success");
   const [cropPhoto, setCropPhoto] = useState(null);
 
   async function saveProfile(event) {
     event.preventDefault();
-    const updated = await updateProfile(form);
-    setForm({ name: updated.name || "", designation: updated.designation || "", email: updated.email || "", personalEmail: updated.personalEmail || "", phone: updated.phone || "", profileImage: updated.profileImage || "" });
-    setMessage("Profile updated successfully");
+    try {
+      const updated = await updateProfile(form);
+      setForm({ name: updated.name || "", designation: updated.designation || "", email: updated.email || "", personalEmail: updated.personalEmail || "", phone: updated.phone || "", profileImage: updated.profileImage || "" });
+      setMessageType("success");
+      setMessage("Profile updated successfully");
+    } catch (error) {
+      setMessageType("error");
+      setMessage(error.message);
+    }
+  }
+
+  async function savePassword(event) {
+    event.preventDefault();
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setMessageType("error");
+      setMessage("New password and confirm password must match.");
+      return;
+    }
+    try {
+      await api("/auth/me/password", {
+        method: "PATCH",
+        body: JSON.stringify({
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword
+        })
+      });
+      setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      setMessageType("success");
+      setMessage("Password updated successfully.");
+    } catch (error) {
+      setMessageType("error");
+      setMessage(error.message);
+    }
   }
 
   function changePhoto(event) {
@@ -3289,6 +5372,7 @@ function ProfilePage({ user }) {
   async function uploadCroppedPhoto(file) {
     const updated = await uploadProfilePhoto(file);
     setForm((current) => ({ ...current, profileImage: updated.profileImage || "" }));
+    setMessageType("success");
     setMessage("Profile photo cropped and uploaded successfully");
     closeCropPhoto();
   }
@@ -3296,7 +5380,7 @@ function ProfilePage({ user }) {
   return (
     <>
       <PageHeader eyebrow="Account" title="Profile" subtitle="Security and institutional profile details" />
-      {message && <div className="notice">{message}</div>}
+      {message && <div className={`notice ${messageType === "error" ? "error" : "success"}`}>{message}</div>}
       <section className="panel profile-card">
         <div className="profile-photo-wrap">
           <div className="profile-photo-frame">
@@ -3322,6 +5406,27 @@ function ProfilePage({ user }) {
           <label>Personal Email<input type="email" value={form.personalEmail} onChange={(e) => setForm({ ...form, personalEmail: e.target.value })} /></label>
           <label>Phone Number<input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Add phone number" /></label>
           <button><Save size={17} /> Save Profile</button>
+        </form>
+      </section>
+      <section className="panel profile-card password-profile-card">
+        <div className="profile-photo-wrap password-guidance">
+          <div className="profile-summary">
+            <div>
+              <h3><KeyRound size={22} /> Change Password</h3>
+              <span>Use a strong password every time</span>
+            </div>
+            <p>Suggested format: at least 8 characters with uppercase, lowercase, number, and special character.</p>
+          </div>
+        </div>
+        <form className="profile-form" onSubmit={savePassword}>
+          <div className="profile-form-heading">
+            <h3>Account Password</h3>
+            <p>For safety, confirm your current password before setting a new one.</p>
+          </div>
+          <label>Current Password<input type="password" value={passwordForm.currentPassword} onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })} required autoComplete="current-password" /></label>
+          <label>New Strong Password<input type="password" value={passwordForm.newPassword} onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })} required minLength={8} autoComplete="new-password" /></label>
+          <label>Confirm New Password<input type="password" value={passwordForm.confirmPassword} onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })} required minLength={8} autoComplete="new-password" /></label>
+          <button><ShieldCheck size={17} /> Update Password</button>
         </form>
       </section>
       {cropPhoto && (
@@ -4817,4 +6922,355 @@ function EmptyState({ message, icon: Icon = Home }) {
 
 function ErrorState({ message }) {
   return <div className="notice error-notice">{message}</div>;
+}
+
+const placementSheetColumns = [
+  ["ron", "RON", "text"],
+  ["placementOfficer", "Placement Officer", "text"],
+  ["companyCategory", "Company Category", "text"],
+  ["leadBy", "Lead By", "text"],
+  ["dateFloated", "Date of Floated", "date"],
+  ["dateOfDrive", "Date of Drive", "date"],
+  ["companyName", "Company Name", "text"],
+  ["jobProfile", "Job Profile", "text"],
+  ["packageText", "Package", "text"],
+  ["branch", "Branch", "text"],
+  ["mode", "Mode (On Campus/ Online/Off Campus)", "text"],
+  ["batch", "Batch", "text"],
+  ["totalEligible", "Total Eligible", "number"],
+  ["totalRegistered", "Total Reg Count", "number"],
+  ["dateSharedWithHr", "Date Shared With HR", "date"],
+  ["dataShared", "Data Shared Yes / No", "text"],
+  ["round1Date", "Round 1 Date", "date"],
+  ["round2Date", "Round 2 (if Any) Date", "date"],
+  ["shortlistedDate", "Shortlisted Date", "date"],
+  ["finalSelectionDate", "Final Selection Date", "date"],
+  ["selections", "No. of Selections", "number"],
+  ["actualStatus", "Actual Status", "text"],
+  ["resultSharedBackend", "Result to be Share With Backend Yes/ No", "text"],
+  ["remarks", "Remarks", "text"]
+];
+
+function EditablePlacementSheet({ year, memberName, records, onReload, onClose }) {
+  const [drafts, setDrafts] = useState({});
+  const [savingId, setSavingId] = useState("");
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setDrafts({});
+    setMessage("");
+  }, [year, memberName]);
+
+  const normalizeSheetKey = value => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const rawDateValue = (record, key) => {
+    const rawMap = {
+      dateFloated: ["Date of Floated", "Floated Date", "Date Floated"],
+      dateOfDrive: ["Date of Drive", "Drive Date"],
+      dateSharedWithHr: ["Date Shared With HR"],
+      round1Date: ["Round 1 Date", "Round 1"],
+      round2Date: ["Round 2 (if Any) Date", "Round 2 Date"],
+      shortlistedDate: ["Shortlisted Date"],
+      finalSelectionDate: ["Final Selection Date", "Final Selection"]
+    };
+    const raw = record.raw || {};
+    const targetKeys = (rawMap[key] || []).map(normalizeSheetKey);
+    const found = Object.entries(raw).find(([rawKey, rawValue]) => targetKeys.includes(normalizeSheetKey(rawKey)) && rawValue !== undefined && rawValue !== null && rawValue !== "");
+    return found ? String(found[1]) : "";
+  };
+  const dateValue = (value, record, key) => {
+    const raw = rawDateValue(record, key);
+    if (!value) return raw;
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime()) || date.getFullYear() < 2000) return raw;
+    return date.toISOString().slice(0, 10);
+  };
+  const fieldValue = (record, key, type) => drafts[record._id]?.[key] ?? (type === "date" ? dateValue(record[key], record, key) : (record[key] ?? ""));
+  const updateDraft = (record, key, value) => {
+    setDrafts(prev => ({ ...prev, [record._id]: { ...(prev[record._id] || {}), [key]: value } }));
+  };
+  const saveRecordOnEnter = (event, record) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    saveRecord(record);
+  };
+  const saveRecord = async (record) => {
+    const changes = drafts[record._id];
+    if (!changes) return;
+    setSavingId(record._id);
+    setMessage("");
+    let clearMessageSoon = false;
+    try {
+      const result = await api(`/drives/planner/records/${record._id}`, { method: "PATCH", body: JSON.stringify(changes) });
+      if (result?.blocked) {
+        setMessage(result.message || "Google Sheet write-back was blocked. App data was not changed.");
+        return;
+      }
+      setDrafts(prev => {
+        const next = { ...prev };
+        delete next[record._id];
+        return next;
+      });
+      setMessage(`Saved ${record.companyName || "planner row"}`);
+      clearMessageSoon = true;
+      await onReload?.();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setSavingId("");
+      if (clearMessageSoon) setTimeout(() => setMessage(""), 2600);
+    }
+  };
+
+  return (
+    <div className="editable-planner placement-sheet-editor">
+      <div className="editable-planner-header">
+        <div>
+          <h3>Placement Sheet for {year}</h3>
+          <p>{records.length} rows linked to {memberName} by the Placement Officer or Lead By column.</p>
+        </div>
+        <div className="editable-planner-header-actions">
+          {message && <span className="planner-msg">{message}</span>}
+          {onClose && <button type="button" className="soft editable-planner-close" onClick={onClose}><X size={16} /> Close Sheet</button>}
+        </div>
+      </div>
+      <div className="planner-grid-wrap placement-sheet-wrap">
+        <table>
+          <thead>
+            <tr>
+              {placementSheetColumns.map(([, label]) => <th key={label}>{label}</th>)}
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {records.map(record => (
+              <tr key={record._id}>
+                {placementSheetColumns.map(([key, label, type]) => (
+                  <td key={`${record._id}-${key}`} data-label={label}>
+                    <input
+                      type={type === "date" ? "text" : type}
+                      value={fieldValue(record, key, type)}
+                      title={String(fieldValue(record, key, type) || "")}
+                      placeholder={type === "date" ? "dd-mm-yyyy" : ""}
+                      onChange={event => updateDraft(record, key, event.target.value)}
+                      onKeyDown={event => saveRecordOnEnter(event, record)}
+                    />
+                  </td>
+                ))}
+                <td className="placement-sheet-actions">
+                  <button onClick={() => saveRecord(record)} disabled={savingId === record._id || !drafts[record._id]}>
+                    <Save size={15} /> {savingId === record._id ? "Saving" : "Save"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!records.length && (
+              <tr>
+                <td colSpan={placementSheetColumns.length + 1}>
+                  No planner rows found for {memberName}. Check that the sheet's Placement Officer or Lead By name exactly matches this manager.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function EditableTargetPlanner({ year, memberName }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  
+  const quarters = ["Jul-Sep", "Oct-Dec", "Jan-Mar", "April-Jun"];
+  const defaultQuarter = {
+    targetAllotted: { zsd: 0, sd: 0, aPlus: 0, a: 0 },
+    targetAchieved: { zsd: 0, sd: 0, aPlus: 0, a: 0 },
+    floated: 0, closed: 0, delayInClosure: 0, sales: 0, core: 0
+  };
+
+  useEffect(() => {
+    if (!year || !memberName) return;
+    setLoading(true);
+    api(`/drives/planner/targets?academicYear=${encodeURIComponent(year)}`)
+      .then(res => {
+        const targetData = res.targets.find(t => t.outreachMember === memberName);
+        setData(targetData?.quarters || {});
+        setLoading(false);
+      })
+      .catch(err => {
+        setMessage(err.message);
+        setLoading(false);
+      });
+  }, [year, memberName]);
+
+  const handleChange = (quarter, section, field, value) => {
+    setData(prev => {
+      const newData = { ...prev };
+      if (!newData[quarter]) newData[quarter] = JSON.parse(JSON.stringify(defaultQuarter));
+      if (section) {
+        newData[quarter][section][field] = Number(value);
+      } else {
+        newData[quarter][field] = Number(value);
+      }
+      return newData;
+    });
+  };
+
+  const handleSave = async (quarter) => {
+    setSaving(true);
+    setMessage("");
+    try {
+      const qData = data[quarter] || defaultQuarter;
+      await api(`/drives/planner/targets`, {
+        method: "POST",
+        body: JSON.stringify({ academicYear: year, memberName, quarter, targetData: qData })
+      });
+      setMessage(`Saved ${quarter} targets`);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setSaving(false);
+      setTimeout(() => setMessage(""), 3000);
+    }
+  };
+
+  if (loading) return <div>Loading planner grid...</div>;
+
+  const getTotal = (section, field) => quarters.reduce((sum, q) => sum + ((data[q]?.[section]?.[field]) || 0), 0);
+  const getFlatTotal = (field) => quarters.reduce((sum, q) => sum + ((data[q]?.[field]) || 0), 0);
+  
+  const totalAllotted = ["zsd", "sd", "aPlus", "a"].reduce((sum, f) => sum + getTotal("targetAllotted", f), 0);
+
+  return (
+    <div className="editable-planner">
+      <div className="editable-planner-header">
+        <h3>Target Planner for year {year}</h3>
+        <p>Annual Alloted Target of {totalAllotted} companies to: {memberName}</p>
+        {message && <span className="planner-msg">{message}</span>}
+      </div>
+      
+      <div className="planner-grid-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Month wise</th>
+              <th>Target Alloted</th>
+              <th>ZSD Companies<br/>(&gt;=15 LPA)</th>
+              <th>SD Companies<br/>(Between 10-15 LPA)</th>
+              <th>A+<br/>(Between 5-10LPA)</th>
+              <th>A<br/>(Between 3-5LPA)</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {quarters.map(q => {
+              const qd = data[q] || defaultQuarter;
+              const qt = Object.values(qd.targetAllotted).reduce((a,b)=>a+b, 0);
+              return (
+                <tr key={`allot-${q}`}>
+                  <td>{q}</td>
+                  <td>{qt}</td>
+                  <td><input type="number" value={qd.targetAllotted.zsd} onChange={e => handleChange(q, 'targetAllotted', 'zsd', e.target.value)} /></td>
+                  <td><input type="number" value={qd.targetAllotted.sd} onChange={e => handleChange(q, 'targetAllotted', 'sd', e.target.value)} /></td>
+                  <td><input type="number" value={qd.targetAllotted.aPlus} onChange={e => handleChange(q, 'targetAllotted', 'aPlus', e.target.value)} /></td>
+                  <td><input type="number" value={qd.targetAllotted.a} onChange={e => handleChange(q, 'targetAllotted', 'a', e.target.value)} /></td>
+                  <td><button onClick={() => handleSave(q)} disabled={saving}>Save</button></td>
+                </tr>
+              )
+            })}
+            <tr className="grand-total">
+              <td>Grand Total</td>
+              <td>{totalAllotted}</td>
+              <td>{getTotal('targetAllotted', 'zsd')}</td>
+              <td>{getTotal('targetAllotted', 'sd')}</td>
+              <td>{getTotal('targetAllotted', 'aPlus')}</td>
+              <td>{getTotal('targetAllotted', 'a')}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Month wise</th>
+              <th>Target Achieved</th>
+              <th>ZSD Companies<br/>(&gt;=15 LPA)</th>
+              <th>SD Companies<br/>(Between 10-15 LPA)</th>
+              <th>A+<br/>(Between 5-10LPA)</th>
+              <th>A<br/>(Between 3-5LPA)</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {quarters.map(q => {
+              const qd = data[q] || defaultQuarter;
+              const qt = Object.values(qd.targetAchieved).reduce((a,b)=>a+b, 0);
+              return (
+                <tr key={`achieve-${q}`}>
+                  <td>{q}</td>
+                  <td>{qt}</td>
+                  <td><input type="number" value={qd.targetAchieved.zsd} onChange={e => handleChange(q, 'targetAchieved', 'zsd', e.target.value)} /></td>
+                  <td><input type="number" value={qd.targetAchieved.sd} onChange={e => handleChange(q, 'targetAchieved', 'sd', e.target.value)} /></td>
+                  <td><input type="number" value={qd.targetAchieved.aPlus} onChange={e => handleChange(q, 'targetAchieved', 'aPlus', e.target.value)} /></td>
+                  <td><input type="number" value={qd.targetAchieved.a} onChange={e => handleChange(q, 'targetAchieved', 'a', e.target.value)} /></td>
+                  <td><button onClick={() => handleSave(q)} disabled={saving}>Save</button></td>
+                </tr>
+              )
+            })}
+            <tr className="grand-total">
+              <td>Grand Total</td>
+              <td>{["zsd", "sd", "aPlus", "a"].reduce((sum, f) => sum + getTotal("targetAchieved", f), 0)}</td>
+              <td>{getTotal('targetAchieved', 'zsd')}</td>
+              <td>{getTotal('targetAchieved', 'sd')}</td>
+              <td>{getTotal('targetAchieved', 'aPlus')}</td>
+              <td>{getTotal('targetAchieved', 'a')}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Month wise</th>
+              <th>Floated Companies</th>
+              <th>Closed Companies</th>
+              <th>Delay in Closure</th>
+              <th>Sales</th>
+              <th>Core</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {quarters.map(q => {
+              const qd = data[q] || defaultQuarter;
+              return (
+                <tr key={`stats-${q}`}>
+                  <td>{q}</td>
+                  <td><input type="number" value={qd.floated} onChange={e => handleChange(q, null, 'floated', e.target.value)} /></td>
+                  <td><input type="number" value={qd.closed} onChange={e => handleChange(q, null, 'closed', e.target.value)} /></td>
+                  <td><input type="number" value={qd.delayInClosure} onChange={e => handleChange(q, null, 'delayInClosure', e.target.value)} /></td>
+                  <td><input type="number" value={qd.sales} onChange={e => handleChange(q, null, 'sales', e.target.value)} /></td>
+                  <td><input type="number" value={qd.core} onChange={e => handleChange(q, null, 'core', e.target.value)} /></td>
+                  <td><button onClick={() => handleSave(q)} disabled={saving}>Save</button></td>
+                </tr>
+              )
+            })}
+            <tr className="grand-total">
+              <td>Grand Total</td>
+              <td>{getFlatTotal('floated')}</td>
+              <td>{getFlatTotal('closed')}</td>
+              <td>{getFlatTotal('delayInClosure')}</td>
+              <td>{getFlatTotal('sales')}</td>
+              <td>{getFlatTotal('core')}</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }

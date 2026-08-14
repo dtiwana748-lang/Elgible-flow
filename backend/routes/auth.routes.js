@@ -69,6 +69,13 @@ const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8).max(128)
 });
+const strongPassword = z.string()
+  .min(8)
+  .max(128)
+  .regex(/[a-z]/, "Password must include a lowercase letter")
+  .regex(/[A-Z]/, "Password must include an uppercase letter")
+  .regex(/[0-9]/, "Password must include a number")
+  .regex(/[^A-Za-z0-9]/, "Password must include a special character");
 
 const SESSION_IDLE_MS = 12 * 60 * 60 * 1000;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -99,6 +106,24 @@ function recordFailedLogin(key) {
   record.count += 1;
 }
 
+function hashAuthorityToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function authUserPayload(user) {
+  return { id: user._id, name: user.name, email: user.email, role: user.role, designation: user.designation, profileImage: user.profileImage, personalEmail: user.personalEmail, phone: user.phone };
+}
+
+async function startSession(user) {
+  const sessionId = crypto.randomBytes(24).toString("hex");
+  user.lastLoginAt = new Date();
+  user.lastSeenAt = new Date();
+  user.activeSessionId = sessionId;
+  user.sessionExpiresAt = new Date(Date.now() + SESSION_IDLE_MS);
+  await user.save();
+  return { token: signToken(user, sessionId), user: authUserPayload(user) };
+}
+
 router.post("/login", async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: "Valid email and password are required" });
@@ -121,17 +146,23 @@ router.post("/login", async (req, res) => {
     return res.status(401).json({ message: "Invalid credentials" });
   }
   loginAttempts.delete(key);
-  const sessionId = crypto.randomBytes(24).toString("hex");
-  user.lastLoginAt = new Date();
-  user.lastSeenAt = new Date();
-  user.activeSessionId = sessionId;
-  user.sessionExpiresAt = new Date(Date.now() + SESSION_IDLE_MS);
-  await user.save();
+  res.json(await startSession(user));
+});
 
-  res.json({
-    token: signToken(user, sessionId),
-    user: { id: user._id, name: user.name, email: user.email, role: user.role, designation: user.designation, profileImage: user.profileImage, personalEmail: user.personalEmail, phone: user.phone }
-  });
+router.post("/authority/:token", async (req, res) => {
+  const token = String(req.params.token || "").trim();
+  if (token.length < 32) return res.status(401).json({ message: "This authority link is invalid" });
+  const tokenHash = hashAuthorityToken(token);
+  const user = await User.findOne({
+    role: "LIST_MAKER",
+    designation: "Higher Authorities",
+    active: true,
+    authorityLinkTokenHash: tokenHash,
+    authorityLinkExpiresAt: { $gt: new Date() }
+  }).select("+activeSessionId +sessionExpiresAt +authorityLinkTokenHash +authorityLinkExpiresAt");
+  if (!user) return res.status(401).json({ message: "This authority link is invalid or expired" });
+  user.authorityLinkLastUsedAt = new Date();
+  res.json(await startSession(user));
 });
 
 router.post("/logout", requireAuth, async (req, res) => {
@@ -166,6 +197,23 @@ router.patch("/me", requireAuth, async (req, res) => {
   await req.user.save();
   await writeAudit({ actor: req.user._id, action: "PROFILE_UPDATED", entity: "User", entityId: req.user._id });
   res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, designation: req.user.designation, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, phone: req.user.phone });
+});
+
+router.patch("/me/password", requireAuth, async (req, res) => {
+  const parsed = z.object({
+    currentPassword: z.string().min(1, "Current password is required"),
+    newPassword: strongPassword
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ message: parsed.error.issues[0]?.message || "Password details are invalid" });
+
+  const user = await User.findById(req.user._id).select("+passwordHash +activeSessionId +sessionExpiresAt");
+  if (!user) return res.status(404).json({ message: "User not found" });
+  const matched = await user.comparePassword(parsed.data.currentPassword);
+  if (!matched) return res.status(401).json({ message: "Current password is incorrect" });
+  user.passwordHash = await User.hashPassword(parsed.data.newPassword);
+  await user.save();
+  await writeAudit({ actor: req.user._id, action: "PASSWORD_UPDATED", entity: "User", entityId: req.user._id });
+  res.json({ message: "Password updated successfully" });
 });
 
 router.post("/me/photo", requireAuth, upload.single("photo"), async (req, res) => {

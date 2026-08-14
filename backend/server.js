@@ -18,7 +18,6 @@ import driveRoutes from "./routes/drive.routes.js";
 import recordsRoutes from "./routes/records.routes.js";
 import eligibilityRoutes from "./routes/eligibility.routes.js";
 import studentPortalRoutes from "./routes/student-portal.routes.js";
-import { startAutoSyncInterval } from "./utils/autoSync.js";
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -110,8 +109,7 @@ app.get("/favicon.ico", (_req, res) => {
 
 // API routes
 app.get("/api/health", (_req, res) => {
-  const database = getDbStatus();
-  res.status(database.connected ? 200 : 503).json({ ok: database.connected, service: "eligible-flow-api", database });
+  res.status(200).json({ status: "ok" });
 });
 
 app.use("/api", (_req, res, next) => {
@@ -178,9 +176,6 @@ async function startServer() {
 
   // Connect to DB
   await connectWithRetry();
-
-  // Start background auto-sync interval for connected Google Sheets (every 2 minutes)
-  startAutoSyncInterval(2 * 60 * 1000);
 
   const server = app.listen(port, () => {
     console.log(`Server running on http://localhost:${port}`);

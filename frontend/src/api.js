@@ -45,7 +45,7 @@ export async function api(path, options = {}) {
       if (path !== "/auth/login") clearAuthToken(data.message || "Authentication required");
       throw new AuthError(data.message || "Authentication required");
     }
-    throw new Error(data.message || "Request failed");
+    throw new Error(data.message || `Unable to complete this request. Please check the details and try again. (${response.status})`);
   }
   return data;
 }

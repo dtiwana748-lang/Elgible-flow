@@ -11,6 +11,11 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     localStorage.removeItem("eligibleFlowToken");
     localStorage.removeItem("token");
+    if (window.location.pathname.startsWith("/authority/")) {
+      clearAuthToken("");
+      setLoading(false);
+      return;
+    }
     if (!getAuthToken()) {
       setLoading(false);
       return;
@@ -85,6 +90,16 @@ export function AuthProvider({ children }) {
     setAuthMessage("");
   }
 
+  async function loginWithAuthorityLink(token) {
+    sessionStorage.removeItem("eligibleFlowToken");
+    localStorage.removeItem("eligibleFlowToken");
+    localStorage.removeItem("token");
+    const data = await api(`/auth/authority/${encodeURIComponent(token)}`, { method: "POST" });
+    setAuthToken(data.token);
+    setUser(data.user);
+    setAuthMessage("");
+  }
+
   async function updateProfile(profile) {
     const data = await api("/auth/me", { method: "PATCH", body: JSON.stringify(profile) });
     setUser(data);
@@ -112,7 +127,7 @@ export function AuthProvider({ children }) {
     setAuthMessage("");
   }
 
-  const value = useMemo(() => ({ user, loading, authMessage, login, logout, updateProfile, uploadProfilePhoto }), [user, loading, authMessage]);
+  const value = useMemo(() => ({ user, loading, authMessage, login, loginWithAuthorityLink, logout, updateProfile, uploadProfilePhoto }), [user, loading, authMessage]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
