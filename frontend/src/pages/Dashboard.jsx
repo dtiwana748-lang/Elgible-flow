@@ -5661,7 +5661,11 @@ function ProfilePhotoCropper({ source, onCancel, onUpload }) {
   const [positionY, setPositionY] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const previewSize = Math.min(320, Math.max(220, window.innerWidth - 62));
+  const viewportWidth = window.visualViewport?.width || window.innerWidth;
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const previewSize = viewportWidth <= 640
+    ? Math.round(Math.min(260, Math.max(190, viewportWidth - 56, viewportHeight * 0.34)))
+    : Math.min(320, Math.max(220, viewportWidth - 62));
 
   const placement = useMemo(() => {
     if (!dimensions) return null;
