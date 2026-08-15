@@ -2437,7 +2437,7 @@ function doPost(e) {
     )}
 
     {isHead && pageType === "dashboard" && !isHigherAuthority && (
-      <DashboardTargetPlanner groups={groups} year={year} selectedBatch={selectedBatch} />
+      <DashboardTargetPlanner groups={groups} year={year} selectedBatch={selectedBatch} selectedOfficer={selectedOfficer} />
     )}
 
     {isHead && selectedOfficer !== "ALL" && pageType === "planner" && (
@@ -2453,9 +2453,13 @@ function doPost(e) {
   </>;
 }
 
-function DashboardTargetPlanner({ groups, year, selectedBatch }) {
+function DashboardTargetPlanner({ groups, year, selectedBatch, selectedOfficer = "ALL" }) {
   const [editMode, setEditMode] = useState(false);
   const [targetOverrides, setTargetOverrides] = useState({});
+  const [savedTargets, setSavedTargets] = useState([]);
+  const [targetScope, setTargetScope] = useState(selectedOfficer !== "ALL" ? "selected" : "all");
+  const [targetMessage, setTargetMessage] = useState("");
+  const [savingTargets, setSavingTargets] = useState(false);
   const [detail, setDetail] = useState(null);
   const quarters = [
     { key: "julSep", label: "Jul-Sep", months: [6, 7, 8] },
@@ -2466,7 +2470,24 @@ function DashboardTargetPlanner({ groups, year, selectedBatch }) {
   const visibleGroups = groups.filter(group => (group.records || []).length);
   const rows = visibleGroups.flatMap(group => (group.records || []).map(record => ({ ...record, __owner: group.name })));
   const officerNames = visibleGroups.map(group => group.name).join(", ");
+  const activeOfficerNames = targetScope === "selected" && selectedOfficer !== "ALL" ? [selectedOfficer] : visibleGroups.map(group => group.name).filter(Boolean);
+  const canSaveSelected = selectedOfficer !== "ALL" && visibleGroups.some(group => group.name === selectedOfficer);
   const selectedYear = selectedBatch && selectedBatch !== "ALL" ? selectedBatch : String(year || "").split("-").at(-1);
+  useEffect(() => {
+    setTargetScope(selectedOfficer !== "ALL" ? "selected" : "all");
+  }, [selectedOfficer]);
+  useEffect(() => {
+    if (!year) return;
+    let activeRequest = true;
+    api(`/drives/planner/targets?academicYear=${encodeURIComponent(year)}`)
+      .then(res => {
+        if (activeRequest) setSavedTargets(Array.isArray(res.targets) ? res.targets : []);
+      })
+      .catch(() => {
+        if (activeRequest) setSavedTargets([]);
+      });
+    return () => { activeRequest = false; };
+  }, [year, targetMessage]);
   const parseDate = value => {
     const text = String(value || "").trim();
     if (!text) return null;
@@ -2514,10 +2535,16 @@ function DashboardTargetPlanner({ groups, year, selectedBatch }) {
       core: rowSet(quarter, record => String(record.companyCategory || record.remarks || "").toLowerCase().includes("core"))
     };
   });
-  const targetKeys = ["target", "zsd", "sd", "aPlus", "a"];
+  const targetKeys = ["zsd", "sd", "aPlus", "a"];
+  const savedTargetFor = (quarterLabel, key) => {
+    if (key === "target") return ["zsd", "sd", "aPlus", "a"].reduce((sum, band) => sum + savedTargetFor(quarterLabel, band), 0);
+    const matchingTargets = savedTargets.filter(target => activeOfficerNames.some(name => String(target.outreachMember || "").trim().toLowerCase() === String(name || "").trim().toLowerCase()));
+    return matchingTargets.reduce((sum, target) => sum + Number(target.quarters?.[quarterLabel]?.targetAllotted?.[key] || 0), 0);
+  };
   const valueFor = (item, key, mode) => {
     const overrideKey = `${item.quarter.key}:${key}`;
     if (mode === "target" && targetOverrides[overrideKey] !== undefined) return Number(targetOverrides[overrideKey] || 0);
+    if (mode === "target") return savedTargetFor(item.quarter.label, key);
     return item[key]?.length || 0;
   };
   const recordsFor = (item, key) => item[key] || [];
@@ -2550,6 +2577,62 @@ function DashboardTargetPlanner({ groups, year, selectedBatch }) {
   const updateOverride = (quarterKey, key, value) => {
     setTargetOverrides(prev => ({ ...prev, [`${quarterKey}:${key}`]: value }));
   };
+  const targetPayloadFor = item => ({
+    targetAllotted: {
+      zsd: valueFor(item, "zsd", "target"),
+      sd: valueFor(item, "sd", "target"),
+      aPlus: valueFor(item, "aPlus", "target"),
+      a: valueFor(item, "a", "target")
+    },
+    targetAchieved: {
+      zsd: item.achievedZsd.length,
+      sd: item.achievedSd.length,
+      aPlus: item.achievedAPlus.length,
+      a: item.achievedA.length
+    },
+    floated: item.floated.length,
+    closed: item.closed.length,
+    delayInClosure: item.delay.length,
+    sales: item.sales.length,
+    core: item.core.length
+  });
+  const savePlannerTargets = async () => {
+    if (!activeOfficerNames.length) {
+      setTargetMessage("Select at least one placement officer before saving targets.");
+      return;
+    }
+    setSavingTargets(true);
+    setTargetMessage("");
+    try {
+      for (const item of sectionRows) {
+        await api("/drives/planner/targets", {
+          method: "POST",
+          body: JSON.stringify({
+            academicYear: year,
+            memberNames: activeOfficerNames,
+            quarter: item.quarter.label,
+            targetData: targetPayloadFor(item)
+          })
+        });
+      }
+      setTargetMessage(`Saved planner targets for ${activeOfficerNames.length === 1 ? activeOfficerNames[0] : `${activeOfficerNames.length} officers`}.`);
+      setSavedTargets(prev => {
+        const memberSet = new Set(activeOfficerNames.map(name => String(name).trim().toLowerCase()));
+        const remaining = prev.filter(target => !memberSet.has(String(target.outreachMember || "").trim().toLowerCase()));
+        const created = activeOfficerNames.map(outreachMember => ({
+          academicYear: year,
+          outreachMember,
+          quarters: sectionRows.reduce((map, item) => ({ ...map, [item.quarter.label]: targetPayloadFor(item) }), {})
+        }));
+        return [...remaining, ...created];
+      });
+      setEditMode(false);
+    } catch (err) {
+      setTargetMessage(err.message || "Unable to save planner targets.");
+    } finally {
+      setSavingTargets(false);
+    }
+  };
   const renderValueCell = (item, mode, key, label) => {
     const value = valueFor(item, key, mode);
     if (editMode && mode === "target" && targetKeys.includes(key)) {
@@ -2565,7 +2648,7 @@ function DashboardTargetPlanner({ groups, year, selectedBatch }) {
       );
     }
     return (
-      <button type="button" className="target-count-button" onClick={() => openDetail(`${item.quarter.label} - ${label}`, recordsFor(item, key))}>
+      <button type="button" className="target-count-button" onClick={() => mode === "target" ? null : openDetail(`${item.quarter.label} - ${label}`, recordsFor(item, key))}>
         {value || ""}
       </button>
     );
@@ -2590,7 +2673,7 @@ function DashboardTargetPlanner({ groups, year, selectedBatch }) {
           <td>Grand Total</td>
           {columnsByMode[mode].map(([key, label]) => (
             <td key={key}>
-              <button type="button" className="target-count-button total" onClick={() => openDetail(`Grand Total - ${label}`, totalRecords(key))}>
+              <button type="button" className="target-count-button total" onClick={() => mode === "target" ? null : openDetail(`Grand Total - ${label}`, totalRecords(key))}>
                 {total(key, mode) || ""}
               </button>
             </td>
@@ -2605,10 +2688,18 @@ function DashboardTargetPlanner({ groups, year, selectedBatch }) {
       <header>
         <div>
           <h3>Target Planner for year {year || selectedYear}</h3>
-          <button type="button" className="target-edit-toggle" onClick={() => setEditMode(value => !value)}>{editMode ? "Done Editing" : "Edit Targets"}</button>
+          <div className="target-planner-actions">
+            <select value={targetScope} onChange={event => setTargetScope(event.target.value)} aria-label="Target update scope">
+              <option value="selected" disabled={!canSaveSelected}>Update selected officer</option>
+              <option value="all">Update all visible officers</option>
+            </select>
+            {editMode && <button type="button" className="target-edit-toggle" onClick={savePlannerTargets} disabled={savingTargets}>{savingTargets ? "Saving..." : "Save Targets"}</button>}
+            <button type="button" className="target-edit-toggle" onClick={() => setEditMode(value => !value)}>{editMode ? "Cancel" : "Edit Targets"}</button>
+          </div>
         </div>
-        <p>Officer-wise planner summary extracted from linked planner rows{selectedBatch !== "ALL" ? ` for batch ${selectedBatch}` : ""}.</p>
-        <strong>Annual Allotted Target of {rows.length} companies to following members: {officerNames || "No officers selected"}</strong>
+        <p>Head-assigned targets are shown with live achievement and closure data{selectedBatch !== "ALL" ? ` for batch ${selectedBatch}` : ""}.</p>
+        <strong>Annual Allotted Target of {total("target", "target")} companies to following members: {officerNames || "No officers selected"}</strong>
+        {targetMessage && <span className="target-planner-message">{targetMessage}</span>}
       </header>
       <div className="target-planner-table-wrap">
         {renderSection("Target Allotted", "target")}

@@ -419,7 +419,9 @@ router.get("/planner/targets", requireAuth, async (req, res) => {
   try {
     const { academicYear } = req.query;
     if (!academicYear) return res.status(400).json({ message: "academicYear is required" });
-    const targets = await TargetPlanner.find({ academicYear }).lean();
+    const filter = { academicYear };
+    if (req.user.role !== "HOD") filter.outreachMember = new RegExp(`^${escapeRegex(req.user.name)}$`, "i");
+    const targets = await TargetPlanner.find(filter).lean();
     res.json({ academicYear, targets });
   } catch (error) {
     res.status(500).json({ message: error.message || "Failed to fetch targets" });
@@ -428,27 +430,31 @@ router.get("/planner/targets", requireAuth, async (req, res) => {
 
 router.post("/planner/targets", requireAuth, requireRole("HOD"), async (req, res) => {
   try {
-    const { academicYear, memberName, quarter, targetData } = req.body;
-    if (!academicYear || !memberName || !quarter || !targetData) {
-      return res.status(400).json({ message: "academicYear, memberName, quarter, and targetData are required" });
+    const { academicYear, memberName, memberNames, quarter, targetData } = req.body;
+    const members = Array.isArray(memberNames) ? memberNames : [memberName];
+    const cleanMembers = [...new Set(members.map(name => String(name || "").trim()).filter(Boolean))];
+    if (!academicYear || !cleanMembers.length || !quarter || !targetData) {
+      return res.status(400).json({ message: "academicYear, memberName/memberNames, quarter, and targetData are required" });
     }
-    
-    let planner = await TargetPlanner.findOne({ academicYear, outreachMember: memberName });
-    if (!planner) {
-      planner = new TargetPlanner({ academicYear, outreachMember: memberName, quarters: {} });
-    }
-    
-    if (!planner.quarters) {
+
+    const planners = [];
+    for (const outreachMember of cleanMembers) {
+      let planner = await TargetPlanner.findOne({ academicYear, outreachMember });
+      if (!planner) {
+        planner = new TargetPlanner({ academicYear, outreachMember, quarters: {} });
+      }
+
+      if (!planner.quarters) {
         planner.quarters = {};
+      }
+
+      planner.quarters[quarter] = targetData;
+      planner.markModified("quarters");
+      await planner.save();
+      planners.push(planner);
     }
-    
-    planner.quarters[quarter] = targetData;
-    
-    // Explicitly mark modified for nested object
-    planner.markModified("quarters");
-    await planner.save();
-    
-    res.json({ message: "Targets saved successfully", planner });
+
+    res.json({ message: `Targets saved for ${planners.length} officer${planners.length === 1 ? "" : "s"}`, planner: planners[0], planners });
   } catch (error) {
     res.status(500).json({ message: error.message || "Failed to save targets" });
   }

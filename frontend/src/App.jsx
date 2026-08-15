@@ -10,7 +10,20 @@ function Shell() {
   const authorityMatch = path.match(/^\/authority\/([^/]+)$/);
   if (path === "/student") return <StudentPortal />;
   if (authorityMatch) return <AuthorityLinkGate token={authorityMatch[1]} user={user} loginWithAuthorityLink={loginWithAuthorityLink} />;
-  if (loading) return <div className="boot">Loading secure workspace...</div>;
+  if (loading) return (
+    <div className="boot">
+      <div className="boot-card" role="status" aria-live="polite">
+        <span className="boot-mark">
+          <img src="/logo.png" alt="" />
+        </span>
+        <span className="boot-spinner" aria-hidden="true" />
+        <div>
+          <h1>Preparing your secure workspace</h1>
+          <p>Verifying your session and loading the placement dashboard.</p>
+        </div>
+      </div>
+    </div>
+  );
   return user ? <Dashboard /> : <Login authMessage={authMessage} />;
 }
 
