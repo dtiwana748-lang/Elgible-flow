@@ -67,6 +67,36 @@ export default function Login({ authMessage = "" }) {
       <div className="login-person-layer" aria-hidden="true">
         <img src="/placement-person.png" alt="" />
       </div>
+      <div className="login-flow-annotations" aria-hidden="true">
+        <div className="flow-note flow-note-insights">
+          <svg viewBox="0 0 230 170">
+            <path className="flow-stroke" d="M34 57 C58 20 142 14 181 42 C215 66 197 114 148 118 C101 122 61 114 43 93" />
+            <path className="flow-stroke delay-one" d="M93 118 C102 150 124 156 138 163" />
+            <path className="flow-stroke delay-two" d="M137 163 C128 153 126 144 132 134" />
+          </svg>
+          <span>Smart<br />Insights</span>
+        </div>
+        <div className="flow-note flow-note-data">
+          <svg viewBox="0 0 190 120">
+            <path className="flow-stroke" d="M24 76 C50 48 90 49 103 70 C117 93 84 104 83 76 C82 52 117 45 142 58" />
+            <path className="flow-stroke delay-one" d="M142 58 L129 48 M142 58 L126 67" />
+          </svg>
+          <span>Placement<br />Data</span>
+        </div>
+        <div className="flow-note flow-note-reporting">
+          <span className="flow-icon"><FileChartColumn size={28} /></span>
+          <svg viewBox="0 0 230 150">
+            <path className="flow-stroke" d="M28 112 C54 86 81 80 112 84" />
+            <path className="flow-stroke delay-one" d="M31 112 L34 93 M31 112 L51 109" />
+          </svg>
+          <span>Real-time<br />Reporting</span>
+        </div>
+        <div className="flow-neon-arrows">
+          <span className="neon-arrow neon-arrow-blue" />
+          <span className="neon-arrow neon-arrow-pink" />
+          <span className="neon-arrow neon-arrow-yellow" />
+        </div>
+      </div>
       <div className="login-content-wrapper">
         <section className="login-panel-white" aria-labelledby="login-title">
           <header className="panel-header">

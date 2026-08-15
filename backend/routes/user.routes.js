@@ -1,15 +1,72 @@
 import { Router } from "express";
 import { z } from "zod";
 import crypto from "crypto";
+import multer from "multer";
+import { v2 as cloudinary } from "cloudinary";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import { User } from "../models/User.js";
 import { writeAudit } from "../utils/audit.js";
 
 const router = Router();
 const AUTHORITY_LINK_DAYS = 90;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const profileUploadDir = path.resolve(__dirname, "..", "uploads", "profiles");
+fs.mkdirSync(profileUploadDir, { recursive: true });
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (_req, file, cb) => {
+    cb(null, ["image/png", "image/jpeg", "image/webp"].includes(file.mimetype));
+  },
+  limits: { fileSize: 2 * 1024 * 1024 }
+});
 
 function hashAuthorityToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function uploadProfileBuffer(file, userId) {
+  return new Promise((resolve, reject) => {
+    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+      reject(new Error("Cloudinary is not configured"));
+      return;
+    }
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: "eligible-flow/profiles",
+        public_id: `${userId}-${Date.now()}`,
+        resource_type: "image",
+        overwrite: true
+      },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result);
+      }
+    );
+    stream.end(file.buffer);
+  });
+}
+
+async function saveProfileBufferLocally(file, userId) {
+  const extensionByMime = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp"
+  };
+  const extension = extensionByMime[file.mimetype] || ".jpg";
+  const filename = `${userId}-${Date.now()}${extension}`;
+  const destination = path.join(profileUploadDir, filename);
+  await fs.promises.writeFile(destination, file.buffer);
+  return `/uploads/profiles/${filename}`;
 }
 
 function cleanOrigin(origin) {
@@ -200,6 +257,28 @@ router.post("/:id/authority-link", async (req, res) => {
   await user.save();
   await writeAudit({ actor: req.user._id, action: "AUTHORITY_LINK_GENERATED", entity: "User", entityId: user._id });
   res.json({ authorityLink, expiresAt: user.authorityLinkExpiresAt });
+});
+
+router.post("/:id/photo", upload.single("photo"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ message: "Profile photo file is required" });
+
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ message: "User not found" });
+  if (user.role !== "LIST_MAKER") {
+    return res.status(403).json({ message: "Only team member profile photos can be updated here" });
+  }
+
+  let uploadProvider = "cloudinary";
+  try {
+    const result = await uploadProfileBuffer(req.file, user._id);
+    user.profileImage = result.secure_url;
+  } catch {
+    uploadProvider = "local";
+    user.profileImage = await saveProfileBufferLocally(req.file, user._id);
+  }
+  await user.save();
+  await writeAudit({ actor: req.user._id, action: "USER_PROFILE_PHOTO_UPDATED", entity: "User", entityId: user._id, metadata: { uploadProvider } });
+  res.json({ id: user._id, name: user.name, email: user.email, role: user.role, designation: user.designation, active: user.active, profileImage: user.profileImage, uploadProvider });
 });
 
 export default router;

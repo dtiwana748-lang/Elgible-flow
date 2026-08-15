@@ -24,7 +24,7 @@ const port = process.env.PORT || 5000;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const frontendBuildPath = path.join(__dirname, "../frontend/dist");
 const frontendPublicPath = path.join(__dirname, "../frontend/public");
-const keepAliveEnabled = String(process.env.KEEP_ALIVE_ENABLED || "").toLowerCase() === "true";
+const keepAliveFlag = String(process.env.KEEP_ALIVE_ENABLED || "").trim().toLowerCase();
 const keepAliveIntervalMs = Math.max(Number(process.env.KEEP_ALIVE_INTERVAL_MS) || 10 * 60 * 1000, 60 * 1000);
 const keepAliveUrl = (
   process.env.KEEP_ALIVE_URL ||
@@ -33,6 +33,7 @@ const keepAliveUrl = (
   process.env.SERVER_URL ||
   ""
 ).trim().replace(/\/+$/, "");
+const keepAliveEnabled = keepAliveFlag === "true" || (!keepAliveFlag && Boolean(process.env.RENDER_EXTERNAL_URL));
 
 const defaultAllowedOrigins = [
   "http://localhost:5173",
@@ -201,16 +202,18 @@ async function startServer() {
 }
 
 function startKeepAlive() {
+  const isLocalKeepAliveUrl = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(keepAliveUrl);
+
   if (!keepAliveEnabled) {
-    console.log("Keep-alive disabled. Set KEEP_ALIVE_ENABLED=true with KEEP_ALIVE_URL to enable anti-sleep pings.");
+    console.log("Keep-alive disabled for this environment. Set KEEP_ALIVE_ENABLED=true and KEEP_ALIVE_URL to enable anti-sleep pings.");
     return;
   }
-  if (!keepAliveUrl || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(keepAliveUrl)) {
-    console.warn("Keep-alive enabled but no public KEEP_ALIVE_URL/PUBLIC_SERVER_URL is configured. Skipping anti-sleep pings.");
+  if (!keepAliveUrl || isLocalKeepAliveUrl) {
+    console.warn("Keep-alive enabled but no public URL is configured. Set KEEP_ALIVE_URL or rely on RENDER_EXTERNAL_URL in Render.");
     return;
   }
 
-  const healthUrl = `${keepAliveUrl}/api/health`;
+  const healthUrl = keepAliveUrl.endsWith("/api/health") ? keepAliveUrl : `${keepAliveUrl}/api/health`;
   const ping = async () => {
     try {
       const response = await fetch(healthUrl, {
@@ -226,7 +229,7 @@ function startKeepAlive() {
     }
   };
 
-  console.log(`Keep-alive enabled. Pinging ${healthUrl} every ${Math.round(keepAliveIntervalMs / 60000)} minute(s).`);
+  console.log(`Keep-alive active. Pinging ${healthUrl} every ${Math.round(keepAliveIntervalMs / 60000)} minute(s).`);
   ping();
   const timer = setInterval(ping, keepAliveIntervalMs);
   if (typeof timer.unref === "function") timer.unref();

@@ -86,6 +86,7 @@ export function AuthProvider({ children }) {
   async function login(email, password) {
     const data = await api("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
     setAuthToken(data.token);
+    localStorage.removeItem(`placement-report-active-${data.user?.role}`);
     setUser(data.user);
     setAuthMessage("");
   }

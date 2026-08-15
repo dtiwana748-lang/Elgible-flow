@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   BarChart3, Bell, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
@@ -835,6 +835,7 @@ function ManagersPage() {
   const [confirmAction, setConfirmAction] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [authorityLink, setAuthorityLink] = useState("");
+  const [managerCropPhoto, setManagerCropPhoto] = useState(null);
 
   function displayAuthorityLink(link) {
     if (!link) return "";
@@ -906,6 +907,41 @@ function ManagersPage() {
     });
     setMessage("");
     setShowForm(true);
+  }
+
+  function changeManagerPhoto(manager, event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      setMessageType("error");
+      setMessage("Use a PNG, JPG, or WebP image for the profile photo.");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setMessageType("error");
+      setMessage("Profile photo must be 2MB or smaller.");
+      return;
+    }
+    const current = managerCropPhoto;
+    if (current?.url) URL.revokeObjectURL(current.url);
+    setManagerCropPhoto({ manager, file, url: URL.createObjectURL(file) });
+  }
+
+  function cancelManagerPhotoCrop() {
+    if (managerCropPhoto?.url) URL.revokeObjectURL(managerCropPhoto.url);
+    setManagerCropPhoto(null);
+  }
+
+  async function uploadManagerPhoto(file) {
+    if (!managerCropPhoto?.manager?.id) return;
+    const body = new FormData();
+    body.append("photo", file);
+    await api(`/users/${managerCropPhoto.manager.id}/photo`, { method: "POST", body });
+    setMessageType("success");
+    setMessage(`${managerCropPhoto.manager.name}'s profile photo updated.`);
+    cancelManagerPhotoCrop();
+    await load();
   }
 
   async function saveManager(event) {
@@ -1090,6 +1126,7 @@ function ManagersPage() {
             <span key={`${m.id}-status`} className={`status ${m.active ? "approved" : "rejected"}`}>{m.active ? "Active" : "Inactive"}</span>,
             <div key={`${m.id}-actions`} className="manager-actions">
               <button className="soft manager-action-btn" onClick={() => editManager(m)}><Settings2 size={14} /> Edit</button>
+              {m.designation === "Higher Authorities" && <label className="soft manager-action-btn manager-photo-action"><Crop size={14} /> Photo<input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => changeManagerPhoto(m, event)} /></label>}
               {m.designation === "Higher Authorities" && <button className="soft manager-action-btn" onClick={() => generateAuthorityLink(m)}><ShieldCheck size={14} /> Link</button>}
               <button className={`manager-action-btn ${m.active ? "soft danger-action" : "soft"}`} onClick={() => toggleManager(m)}>{m.active ? "Deactivate" : "Activate"}</button>
               <button className="soft danger-action manager-action-btn" onClick={() => deleteManager(m)}><Trash2 size={14} /> Delete</button>
@@ -1111,6 +1148,13 @@ function ManagersPage() {
             setMessageType("error");
             setMessage(`Unable to delete account: ${errorMessage}`);
           }}
+        />
+      )}
+      {managerCropPhoto && (
+        <ProfilePhotoCropper
+          source={managerCropPhoto}
+          onCancel={cancelManagerPhotoCrop}
+          onUpload={uploadManagerPhoto}
         />
       )}
       {message && <div className={`manager-notice ${messageType}`} role="status">{message}</div>}
@@ -1854,8 +1898,12 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
   const allComparisonRecords = sortPlannerRecords(report?.comparisonRecords || allRecords);
   const recordBatchName = record => String(record.batch || record.academicYear || "").trim();
   const batchOptions = [...new Set([...allRecords, ...allComparisonRecords].map(recordBatchName).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const filteredRecords = sortPlannerRecords(allRecords.filter(record => selectedBatch === "ALL" || recordBatchName(record) === selectedBatch));
-  const filteredComparisonRecords = sortPlannerRecords(allComparisonRecords.filter(record => selectedBatch === "ALL" || recordBatchName(record) === selectedBatch || recordBatchName(record) !== recordBatchName(filteredRecords[0] || {})));
+  const selectedBatchRecords = allRecords.filter(record => recordBatchName(record) === selectedBatch);
+  const selectedBatchFallbackRecords = allComparisonRecords.filter(record => recordBatchName(record) === selectedBatch);
+  const filteredRecords = sortPlannerRecords(
+    selectedBatch === "ALL" ? allRecords : (selectedBatchRecords.length ? selectedBatchRecords : selectedBatchFallbackRecords)
+  );
+  const filteredComparisonRecords = sortPlannerRecords(allComparisonRecords);
   const managerRoleRank = name => {
     const manager = managerUsers.find(item => normalizePerson(item.name) === normalizePerson(name));
     const designation = String(manager?.designation || "").toLowerCase();
@@ -1883,7 +1931,15 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
       ));
       return { name, summary: summarizePlannerRows(records), records, comparisonRecords: comparisonRecords.length ? comparisonRecords : allComparisonRecords };
     }).sort((a, b) => managerRoleRank(a.name) - managerRoleRank(b.name) || a.name.localeCompare(b.name))
-    : [{ name: user.name, summary: summarizePlannerRows(filteredRecords), records: filteredRecords, outreach: user.designation?.toLowerCase().includes("outreach") }];
+    : [{
+      name: user.name,
+      summary: summarizePlannerRows(filteredRecords),
+      records: filteredRecords,
+      comparisonRecords: allComparisonRecords.filter(record => (
+        normalizePerson(record.placementOfficer) === normalizePerson(user.name) || normalizePerson(record.leadBy) === normalizePerson(user.name)
+      )),
+      outreach: user.designation?.toLowerCase().includes("outreach")
+    }];
   const allGroups = reportGroups;
   
   const groups = selectedOfficer === "ALL" ? allGroups : allGroups.filter(g => g.name === selectedOfficer);
@@ -2094,13 +2150,6 @@ function doPost(e) {
       {isHead && pageType === "planner" && <button type="button" onClick={() => { const nextYear = year || currentYear; setUploadYear(nextYear); setUploadBatch(selectedBatch !== "ALL" ? selectedBatch : defaultBatchForYear(nextYear)); setUploadSheetName(""); setPlannerSheetUrl(""); setPlannerAppsScriptUrl(""); setPreview(null); setPreviewSearch(""); setShowLinkPreviewCard(false); setShowPlannerUpload(true); }}><FileSpreadsheet size={17} /> Link Sheet</button>}
     </PageHeader>
     {pageType !== "growth" && <div className={`planner-yearbar ${pageType === "dashboard" ? "dashboard-filterbar" : ""}`}>
-      {pageType === "report-cards" && (
-        <label>Academic year
-          <select value={year} onChange={e => { setYear(e.target.value); load(e.target.value); }}>
-            {yearOptions.map(item => <option key={item} value={item}>{item.split("-")[0]}</option>)}
-          </select>
-        </label>
-      )}
       <label>Batch
         <select value={selectedBatch} onChange={e => setSelectedBatch(e.target.value)}>
           <option value="ALL">All Batches</option>
@@ -2616,6 +2665,7 @@ function PlannerMetric({ label, value, active, onClick }) {
 function AuthorityOverview({ summary = {}, records, compactIntro = false }) {
   const [activeMetric, setActiveMetric] = useState("floated");
   const [searchTerm, setSearchTerm] = useState("");
+  const detailPanelRef = useRef(null);
   const allRows = records || [];
   const numberValue = value => {
     const number = Number(value);
@@ -2661,8 +2711,16 @@ function AuthorityOverview({ summary = {}, records, compactIntro = false }) {
     { key: "selections", label: "Selections", value: selectionTotal.toLocaleString(), icon: Users, tone: "orange", rows: selectionRows, hint: "Rows where student selections are recorded" }
   ];
   const activeCard = metricCards.find(item => item.key === activeMetric) || metricCards[1];
-  const detailRows = filteredBySearch(activeCard.rows).slice(0, 18);
-  const tableRows = filteredBySearch(activeCard.rows).slice(0, 50);
+  const matchingRows = filteredBySearch(activeCard.rows);
+  const detailRows = matchingRows.slice(0, 18);
+  const tableRows = matchingRows.slice(0, 50);
+  useEffect(() => {
+    if (!searchTerm.trim()) return;
+    const timer = window.setTimeout(() => {
+      detailPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [searchTerm, activeMetric]);
   return (
     <section className="authority-overview-panel authority-overview-redesign">
       <div className="authority-command-panel">
@@ -2693,14 +2751,14 @@ function AuthorityOverview({ summary = {}, records, compactIntro = false }) {
         ))}
       </div>
 
-      <div className="authority-detail-panel">
+      <div className="authority-detail-panel" ref={detailPanelRef}>
         <header>
           <div>
             <span className="eyebrow">Drill down</span>
             <h3>{activeCard.label} details</h3>
-            <p>{filteredBySearch(activeCard.rows).length} matching row{filteredBySearch(activeCard.rows).length === 1 ? "" : "s"} shown from current planner data. Highest package: {highestPackage || 0} LPA.</p>
+            <p>{matchingRows.length} matching row{matchingRows.length === 1 ? "" : "s"} shown from current planner data. Highest package: {highestPackage || 0} LPA.</p>
           </div>
-          <span className="authority-detail-count">{activeCard.value}</span>
+          <span className="authority-detail-count">{searchTerm.trim() ? matchingRows.length.toLocaleString() : activeCard.value}</span>
         </header>
         <div className="authority-detail-grid">
           {detailRows.map((record) => (
