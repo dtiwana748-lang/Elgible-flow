@@ -138,7 +138,7 @@ export default function Dashboard() {
   const nav = isHod ? hodNav : makerNav(user);
   const defaultActive = isHod || isHigherAuthority ? "dashboard" : "report-cards";
   const [active, setActiveState] = useState(() => {
-    const saved = localStorage.getItem(`placement-report-active-${user.role}`);
+    const saved = isHigherAuthority ? "" : localStorage.getItem(`placement-report-active-${user.role}`);
     return nav.some(item => item.id === saved) ? saved : defaultActive;
   });
   const [pendingPlannerRequests, setPendingPlannerRequests] = useState(0);
@@ -2076,10 +2076,10 @@ function doPost(e) {
   }
 }`;
   return <>
-    <PageHeader eyebrow={overview ? "Head Performance Workspace" : (pageType === "edit-requests" ? "Planner Corrections" : (pageType === "report-cards" ? "Report Cards" : "Year-wise Planner"))} title={overview ? "Placement Performance Dashboard" : (pageType === "edit-requests" ? "Edit Requests" : (pageType === "report-cards" ? "Officer Report Cards" : "Placement Planner & Linked Sheets"))} subtitle={pageType === "edit-requests" ? "Request a correction for any planner row and track its status" : "All figures are calculated directly from the linked company tracker"}>
+    <PageHeader eyebrow={pageType === "growth" ? "Batch Progress" : (overview ? "Head Performance Workspace" : (pageType === "edit-requests" ? "Planner Corrections" : (pageType === "report-cards" ? "Report Cards" : "Year-wise Planner")))} title={pageType === "growth" ? "Placement Progress Overview" : (overview ? "Placement Performance Dashboard" : (pageType === "edit-requests" ? "Edit Requests" : (pageType === "report-cards" ? "Officer Report Cards" : "Placement Planner & Linked Sheets")))} subtitle={pageType === "growth" ? "Current batch progress is shown as completion and activity, without incomplete-year comparison deltas" : (pageType === "edit-requests" ? "Request a correction for any planner row and track its status" : "All figures are calculated directly from the linked company tracker")}>
       {isHead && pageType === "planner" && <button type="button" onClick={() => { const nextYear = year || currentYear; setUploadYear(nextYear); setUploadBatch(selectedBatch !== "ALL" ? selectedBatch : defaultBatchForYear(nextYear)); setUploadSheetName(""); setPlannerSheetUrl(""); setPlannerAppsScriptUrl(""); setPreview(null); setPreviewSearch(""); setShowLinkPreviewCard(false); setShowPlannerUpload(true); }}><FileSpreadsheet size={17} /> Link Sheet</button>}
     </PageHeader>
-    <div className={`planner-yearbar ${pageType === "dashboard" ? "dashboard-filterbar" : ""}`}>
+    {pageType !== "growth" && <div className={`planner-yearbar ${pageType === "dashboard" ? "dashboard-filterbar" : ""}`}>
       {pageType === "report-cards" && (
         <label>Academic year
           <select value={year} onChange={e => { setYear(e.target.value); load(e.target.value); }}>
@@ -2102,7 +2102,7 @@ function doPost(e) {
         </label>
       )}
       {pageType !== "dashboard" && <span className="planner-source"><ShieldCheck size={16}/> Verified from linked Google Sheet</span>}
-    </div>
+    </div>}
 
     {pageType === "edit-requests" && <section className="edit-request-page">
       <div className="edit-request-builder">
@@ -2364,6 +2364,8 @@ function doPost(e) {
 
     {isHigherAuthority && pageType === "dashboard" && <AuthorityOverview summary={summary} records={visibleRecords} />}
 
+    {isHigherAuthority && pageType === "growth" && <AuthorityOverview summary={summarizePlannerRows(allComparisonRecords)} records={allComparisonRecords} compactIntro />}
+
     {(pageType === "report-cards" || (pageType === "dashboard" && !isHigherAuthority)) && (
       <section className="planner-groups" style={{ marginTop: '2rem' }}>
         {groups.map((group, index) => <PlannerReportCard key={`${group.outreach}-${group.name}-${index}`} group={group} year={year} selectedBatch={selectedBatch} canEdit={isHead} canRequest={!isHead} requests={report?.requests || []} onRequest={requestCorrection} onReload={() => load(year)} />)}
@@ -2597,30 +2599,123 @@ function PlannerMetric({ label, value, active, onClick }) {
   );
 }
 
-function AuthorityOverview({ summary, records }) {
-  const rows = (records || []).slice(0, 12);
-  const stats = [
-    ["Companies Floated", summary.floated || 0],
-    ["Closed Companies", summary.closed || 0],
-    ["In Process", summary.inProcess || 0],
-    ["Total Selections", summary.selections || 0],
-    ["Highest Package", `${summary.highestPackage || 0} LPA`]
+function AuthorityOverview({ summary = {}, records, compactIntro = false }) {
+  const [activeMetric, setActiveMetric] = useState("floated");
+  const [searchTerm, setSearchTerm] = useState("");
+  const allRows = records || [];
+  const numberValue = value => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  };
+  const isClosed = record => /closed|complete|completed|selected/i.test(record.actualStatus || record.status || "");
+  const isInProcess = record => /process|open|ongoing|pending|floated|active/i.test(record.actualStatus || record.status || "");
+  const packageLabel = record => record.packageText || (record.packageLpa ? `${record.packageLpa} LPA` : "-");
+  const targetValue = record => numberValue(record.companyTarget ?? record.targetCompanies ?? record.targetCompanyCount ?? record.totalTargetCompanies ?? record.totalCompaniesTarget ?? record.target ?? 1);
+  const textForSearch = record => [
+    record.companyName,
+    record.jobProfile,
+    record.placementOfficer,
+    record.leadBy,
+    record.packageText,
+    record.batch,
+    record.actualStatus
+  ].join(" ").toLowerCase();
+  const filteredBySearch = rows => {
+    const query = searchTerm.trim().toLowerCase();
+    if (!query) return rows;
+    return rows.filter(record => textForSearch(record).includes(query));
+  };
+
+  const completedRows = allRows.filter(isClosed);
+  const inProcessRows = allRows.filter(record => isInProcess(record) && !isClosed(record));
+  const selectionRows = allRows.filter(record => numberValue(record.selections) > 0);
+  const targetTotal = allRows.reduce((sum, record) => sum + targetValue(record), 0);
+  const selectionTotal = allRows.reduce((sum, record) => sum + numberValue(record.selections), 0);
+  const progressPercent = allRows.length ? Math.round((completedRows.length / allRows.length) * 100) : 0;
+  const highestPackage = summary.highestPackage || Math.max(0, ...allRows.map(record => {
+    const raw = String(record.packageText || record.packageLpa || "").replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+    let value = raw ? Number(raw[0]) : Number(record.packageLpa || 0);
+    if (!Number.isFinite(value)) value = 0;
+    return value > 1000 ? Number((value / 100000).toFixed(2)) : value;
+  }));
+
+  const metricCards = [
+    { key: "target", label: "Total Target", value: targetTotal.toLocaleString(), icon: Gauge, tone: "blue", rows: allRows, hint: "Total targeted companies counted from planner rows" },
+    { key: "floated", label: "Total Floated", value: allRows.length.toLocaleString(), icon: BriefcaseBusiness, tone: "red", rows: allRows, hint: "All company opportunities currently visible" },
+    { key: "progress", label: "Progress", value: `${progressPercent}%`, icon: Percent, tone: "green", rows: inProcessRows, hint: `${completedRows.length} completed from ${allRows.length} floated` },
+    { key: "completed", label: "Completed", value: completedRows.length.toLocaleString(), icon: CheckCircle2, tone: "purple", rows: completedRows, hint: "Closed or completed placement activities" },
+    { key: "selections", label: "Selections", value: selectionTotal.toLocaleString(), icon: Users, tone: "orange", rows: selectionRows, hint: "Rows where student selections are recorded" }
   ];
+  const activeCard = metricCards.find(item => item.key === activeMetric) || metricCards[1];
+  const detailRows = filteredBySearch(activeCard.rows).slice(0, 18);
+  const tableRows = filteredBySearch(activeCard.rows).slice(0, 50);
   return (
-    <section className="authority-overview-panel">
-      <div className="authority-stat-grid">
-        {stats.map(([label, value]) => (
-          <article key={label}>
+    <section className="authority-overview-panel authority-overview-redesign">
+      <div className="authority-command-panel">
+        <div>
+          <span className="eyebrow">{compactIntro ? "Live progress" : "Authority overview"}</span>
+          <h3>Overall placement performance</h3>
+          <p>Review targets, floated companies, progress, completed drives, selections, registrations, and packages from the linked planner data.</p>
+        </div>
+        <label className="authority-search-box">
+          <Search size={18} />
+          <input
+            value={searchTerm}
+            onChange={event => setSearchTerm(event.target.value)}
+            placeholder="Search company, role, officer, batch, status..."
+            aria-label="Search overview details"
+          />
+        </label>
+      </div>
+
+      <div className="authority-kpi-grid">
+        {metricCards.map(({ key, label, value, icon: Icon, tone, hint }) => (
+          <button type="button" key={key} className={`authority-kpi-card ${activeMetric === key ? "active" : ""} tone-${tone}`} onClick={() => setActiveMetric(key)}>
+            <span className="authority-kpi-icon"><Icon size={21} /></span>
             <span>{label}</span>
             <strong>{value}</strong>
-          </article>
+            <small>{hint}</small>
+          </button>
         ))}
       </div>
+
+      <div className="authority-detail-panel">
+        <header>
+          <div>
+            <span className="eyebrow">Drill down</span>
+            <h3>{activeCard.label} details</h3>
+            <p>{filteredBySearch(activeCard.rows).length} matching row{filteredBySearch(activeCard.rows).length === 1 ? "" : "s"} shown from current planner data. Highest package: {highestPackage || 0} LPA.</p>
+          </div>
+          <span className="authority-detail-count">{activeCard.value}</span>
+        </header>
+        <div className="authority-detail-grid">
+          {detailRows.map((record) => (
+            <article key={record._id || `${record.companyName}-${record.jobProfile}-${record.batch}`} className="authority-detail-card">
+              <div>
+                <strong title={record.companyName}>{record.companyName || "-"}</strong>
+                <span title={record.jobProfile}>{record.jobProfile || "-"}</span>
+              </div>
+              <dl>
+                <div><dt>Officer</dt><dd>{record.placementOfficer || record.leadBy || "-"}</dd></div>
+                <div><dt>Batch</dt><dd>{record.batch || "-"}</dd></div>
+                <div><dt>Target</dt><dd>{targetValue(record).toLocaleString()}</dd></div>
+                <div><dt>Selections</dt><dd>{numberValue(record.selections).toLocaleString()}</dd></div>
+              </dl>
+              <footer>
+                <span className={`authority-status-pill ${isClosed(record) ? "closed" : "active"}`}>{record.actualStatus || "-"}</span>
+                <span>{packageLabel(record)}</span>
+              </footer>
+            </article>
+          ))}
+          {!detailRows.length && <EmptyState icon={FileSearch} message="No matching placement details found" />}
+        </div>
+      </div>
+
       <div className="authority-company-table">
         <header>
           <div>
-            <span className="eyebrow">Company Overview</span>
-            <h3>Latest placement activity</h3>
+            <span className="eyebrow">Detailed rows</span>
+            <h3>{activeCard.label} report table</h3>
           </div>
         </header>
         <div className="authority-table-scroll">
@@ -2629,7 +2724,7 @@ function AuthorityOverview({ summary, records }) {
               <tr><th>Company</th><th>Job Profile</th><th>Officer</th><th>Package</th><th>Batch</th><th>Status</th><th>Selections</th></tr>
             </thead>
             <tbody>
-              {rows.map((record) => (
+              {tableRows.map((record) => (
                 <tr key={record._id}>
                   <td title={record.companyName}>{record.companyName || "-"}</td>
                   <td title={record.jobProfile}>{record.jobProfile || "-"}</td>
@@ -2640,7 +2735,7 @@ function AuthorityOverview({ summary, records }) {
                   <td>{record.selections || 0}</td>
                 </tr>
               ))}
-              {!rows.length && <tr><td colSpan="7">No placement rows found for this authority.</td></tr>}
+              {!tableRows.length && <tr><td colSpan="7">No placement rows found for this selection.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -5318,6 +5413,7 @@ function ProfilePage({ user }) {
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("success");
   const [cropPhoto, setCropPhoto] = useState(null);
+  const canEditOfficialEmail = user.role === "HOD";
 
   async function saveProfile(event) {
     event.preventDefault();
@@ -5402,7 +5498,7 @@ function ProfilePage({ user }) {
           </div>
           <label>Name<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
           <label>Professional Role / Designation<input value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })} placeholder="e.g. Placement Officer or Assistant Professor" maxLength={80} /></label>
-          <label>Official Email<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></label>
+          <label>Official Email<input type="email" value={form.email} onChange={(e) => canEditOfficialEmail && setForm({ ...form, email: e.target.value })} required readOnly={!canEditOfficialEmail} className={!canEditOfficialEmail ? "locked-profile-input" : ""} title={!canEditOfficialEmail ? "Only the Head can change official email addresses" : undefined} /><small>{canEditOfficialEmail ? "Head access can update the official login email." : "Only the Head can change official email addresses."}</small></label>
           <label>Personal Email<input type="email" value={form.personalEmail} onChange={(e) => setForm({ ...form, personalEmail: e.target.value })} /></label>
           <label>Phone Number<input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Add phone number" /></label>
           <button><Save size={17} /> Save Profile</button>

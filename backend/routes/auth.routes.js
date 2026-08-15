@@ -188,8 +188,13 @@ router.patch("/me", requireAuth, async (req, res) => {
   }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ message: "Profile details are invalid" });
 
+  const requestedEmail = parsed.data.email.toLowerCase();
+  if (req.user.role !== "HOD" && requestedEmail !== req.user.email.toLowerCase()) {
+    return res.status(403).json({ message: "Only the Head can change official email addresses" });
+  }
+
   req.user.name = parsed.data.name;
-  req.user.email = parsed.data.email.toLowerCase();
+  req.user.email = requestedEmail;
   req.user.profileImage = parsed.data.profileImage || undefined;
   req.user.designation = parsed.data.designation || undefined;
   req.user.personalEmail = parsed.data.personalEmail || undefined;
