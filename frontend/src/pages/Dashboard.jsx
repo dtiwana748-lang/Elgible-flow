@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   BarChart3, Bell, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
-  Crop, FileDown, Gauge, GraduationCap, Home, Info, KeyRound, LayoutDashboard, ListChecks, LogOut, MoveHorizontal, MoveVertical, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users, UsersRound, X, ZoomIn, Calendar
+  Crop, FileDown, Gauge, GraduationCap, Home, Info, KeyRound, LayoutDashboard, ListChecks, LogOut, MoveHorizontal, MoveVertical, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users, UsersRound, X, ZoomIn, Calendar, Target
 } from "lucide-react";
 import { api, downloadApiFile } from "../api.js";
 import { assetUrl } from "../api.js";
@@ -26,6 +26,7 @@ const makerNav = (user) => {
   }
   return [
     { id: "report-cards", label: "Reports", icon: BarChart3 },
+    { id: "target-planner", label: "Target Planner", icon: Target },
     { id: "edit-requests", label: "Edit Requests", icon: FileSearch },
     { id: "profile", label: "Profile", icon: UserCog }
   ];
@@ -172,6 +173,7 @@ export default function Dashboard() {
         {active === "managers" && isHod && <ManagersPage />}
         {active === "report-cards" && <PlacementPlannerPage user={user} pageType="report-cards" />}
         {active === "edit-requests" && <PlacementPlannerPage user={user} pageType="edit-requests" />}
+        {active === "target-planner" && <PlacementPlannerPage user={user} pageType="target-planner" />}
         {active === "planner" && <PlacementPlannerPage user={user} pageType="planner" />}
         {active === "requests" && isHod && <PlannerRequestsPage />}
         {active === "student-requests" && (isHod ? <StudentRequestsPage /> : <DriveWisePage user={user} initialTab="requests" />)}
@@ -2146,7 +2148,7 @@ function doPost(e) {
   }
 }`;
   return <>
-    <PageHeader eyebrow={pageType === "growth" ? "Batch Progress" : (overview ? "Head Performance Workspace" : (pageType === "edit-requests" ? "Planner Corrections" : (pageType === "report-cards" ? "Report Cards" : "Year-wise Planner")))} title={pageType === "growth" ? "Placement Progress Overview" : (overview ? "Placement Performance Dashboard" : (pageType === "edit-requests" ? "Edit Requests" : (pageType === "report-cards" ? "Officer Report Cards" : "Placement Planner & Linked Sheets")))} subtitle={pageType === "growth" ? "Current batch progress is shown as completion and activity, without incomplete-year comparison deltas" : (pageType === "edit-requests" ? "Request a correction for any planner row and track its status" : "All figures are calculated directly from the linked company tracker")}>
+    <PageHeader eyebrow={pageType === "growth" ? "Batch Progress" : (overview ? "Head Performance Workspace" : (pageType === "edit-requests" ? "Planner Corrections" : (pageType === "report-cards" ? "Report Cards" : (pageType === "target-planner" ? "Target Tracking" : "Year-wise Planner"))))} title={pageType === "growth" ? "Placement Progress Overview" : (overview ? "Placement Performance Dashboard" : (pageType === "edit-requests" ? "Edit Requests" : (pageType === "report-cards" ? "Officer Report Cards" : (pageType === "target-planner" ? "Target Planner" : "Placement Planner & Linked Sheets"))))} subtitle={pageType === "growth" ? "Current batch progress is shown as completion and activity, without incomplete-year comparison deltas" : (pageType === "edit-requests" ? "Request a correction for any planner row and track its status" : (pageType === "target-planner" ? "View your targets and current achievement flow" : "All figures are calculated directly from the linked company tracker"))}>
       {isHead && pageType === "planner" && <button type="button" onClick={() => { const nextYear = year || currentYear; setUploadYear(nextYear); setUploadBatch(selectedBatch !== "ALL" ? selectedBatch : defaultBatchForYear(nextYear)); setUploadSheetName(""); setPlannerSheetUrl(""); setPlannerAppsScriptUrl(""); setPreview(null); setPreviewSearch(""); setShowLinkPreviewCard(false); setShowPlannerUpload(true); }}><FileSpreadsheet size={17} /> Link Sheet</button>}
     </PageHeader>
     {pageType !== "growth" && <div className={`planner-yearbar ${pageType === "dashboard" ? "dashboard-filterbar" : ""}`}>
@@ -2436,16 +2438,16 @@ function doPost(e) {
       </section>
     )}
 
-    {isHead && pageType === "dashboard" && !isHigherAuthority && (
-      <DashboardTargetPlanner groups={groups} year={year} selectedBatch={selectedBatch} selectedOfficer={selectedOfficer} />
+    {((isHead && pageType === "dashboard") || pageType === "target-planner") && !isHigherAuthority && (
+      <DashboardTargetPlanner groups={groups} year={year} selectedBatch={selectedBatch} selectedOfficer={selectedOfficer} readOnly={!isHead} />
     )}
 
-    {isHead && selectedOfficer !== "ALL" && pageType === "planner" && (
+    {((isHead && selectedOfficer !== "ALL") || !isHead) && pageType === "planner" && (
       <section className="editable-planner-section" style={{ marginTop: '2rem' }}>
         <EditablePlacementSheet
           year={year}
-          memberName={selectedOfficer}
-          records={groups.find(group => group.name === selectedOfficer)?.records || []}
+          memberName={isHead ? selectedOfficer : (groups[0]?.name || user.name)}
+          records={isHead ? groups.find(group => group.name === selectedOfficer)?.records || [] : groups[0]?.records || []}
           onReload={() => load(year)}
         />
       </section>
@@ -2453,7 +2455,7 @@ function doPost(e) {
   </>;
 }
 
-function DashboardTargetPlanner({ groups, year, selectedBatch, selectedOfficer = "ALL" }) {
+function DashboardTargetPlanner({ groups, year, selectedBatch, selectedOfficer = "ALL", readOnly = false }) {
   const [editMode, setEditMode] = useState(false);
   const [targetOverrides, setTargetOverrides] = useState({});
   const [savedTargets, setSavedTargets] = useState([]);
@@ -2688,14 +2690,16 @@ function DashboardTargetPlanner({ groups, year, selectedBatch, selectedOfficer =
       <header>
         <div>
           <h3>Target Planner for year {year || selectedYear}</h3>
-          <div className="target-planner-actions">
-            <select value={targetScope} onChange={event => setTargetScope(event.target.value)} aria-label="Target update scope">
-              <option value="selected" disabled={!canSaveSelected}>Update selected officer</option>
-              <option value="all">Update all visible officers</option>
-            </select>
-            {editMode && <button type="button" className="target-edit-toggle" onClick={savePlannerTargets} disabled={savingTargets}>{savingTargets ? "Saving..." : "Save Targets"}</button>}
-            <button type="button" className="target-edit-toggle" onClick={() => setEditMode(value => !value)}>{editMode ? "Cancel" : "Edit Targets"}</button>
-          </div>
+          {!readOnly && (
+            <div className="target-planner-actions">
+              <select value={targetScope} onChange={event => setTargetScope(event.target.value)} aria-label="Target update scope">
+                <option value="selected" disabled={!canSaveSelected}>Update selected officer</option>
+                <option value="all">Update all visible officers</option>
+              </select>
+              {editMode && <button type="button" className="target-edit-toggle" onClick={savePlannerTargets} disabled={savingTargets}>{savingTargets ? "Saving..." : "Save Targets"}</button>}
+              <button type="button" className="target-edit-toggle" onClick={() => setEditMode(value => !value)}>{editMode ? "Cancel" : "Edit Targets"}</button>
+            </div>
+          )}
         </div>
         <p>Head-assigned targets are shown with live achievement and closure data{selectedBatch !== "ALL" ? ` for batch ${selectedBatch}` : ""}.</p>
         <strong>Annual Allotted Target of {total("target", "target")} companies to following members: {officerNames || "No officers selected"}</strong>
