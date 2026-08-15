@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
   ArrowRight,
-  CheckCircle,
   Eye,
   EyeOff,
   FileSpreadsheet,
@@ -10,7 +9,6 @@ import {
   LockKeyhole,
   Mail,
   Medal,
-  RefreshCw,
   ShieldCheck,
   Sparkles,
   Target,
@@ -27,13 +25,6 @@ export default function Login({ authMessage = "" }) {
   const [busy, setBusy] = useState(false);
 
   const loginImage = "/bg.png";
-
-  const securityFeatures = [
-    { icon: ShieldCheck, title: "Secure Access", desc: "Role-based authentication" },
-    { icon: LockKeyhole, title: "Data Protection", desc: "Protected placement data" },
-    { icon: RefreshCw, title: "Real-time Sync", desc: "Latest reporting data" },
-    { icon: FileChartColumn, title: "Accurate Reports", desc: "Reliable placement insights" }
-  ];
 
   async function submit(event) {
     event.preventDefault();
@@ -178,39 +169,25 @@ export default function Login({ authMessage = "" }) {
             <span>Secured access powered by Team Placify</span>
           </footer>
         </section>
-
-        <section className="login-panel-dark" aria-labelledby="access-title">
-          <header className="dark-header">
-            <div className="shield-icon"><ShieldCheck size={18} /></div>
-            <div>
-              <span className="access-eyebrow">Secure Placement Access</span>
-              <h2 id="access-title">Secure Placement Access</h2>
-              <p>Manage placement operations from one secure workspace</p>
-            </div>
-          </header>
-
-          <div className="login-security-grid">
-            {securityFeatures.map((feature) => (
-              <article key={feature.title} className="login-security-item">
-                <feature.icon size={23} />
-                <h3>{feature.title}</h3>
-                <p>{feature.desc}</p>
-              </article>
-            ))}
-          </div>
-
-          <div className="status-footer">
-            <CheckCircle size={16} />
-            <span>Placement Report services are operational and secure</span>
-          </div>
-        </section>
       </div>
 
-      <footer className="login-footer">
+      <footer className="login-footer" aria-label="Placement mission">
+        <span className="login-footer-icon">
+          <Target size={30} />
+        </span>
+        <span className="login-footer-copy">
+          <strong>
+            <span> Empowering Institutions.</span>
+          </strong>
+          <small>Let's build successful futures.</small>
+        </span>
+      </footer>
+
+      <div className="login-bottom-rights" aria-label="Copyright">
         <span>&copy; 2026 Team Placify. All rights reserved.</span>
         <span className="separator">|</span>
         <span>Placement Planning &amp; Reporting Console</span>
-      </footer>
+      </div>
     </main>
   );
 }
