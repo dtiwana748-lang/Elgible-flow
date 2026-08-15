@@ -5410,10 +5410,30 @@ function ProfilePage({ user }) {
   const { updateProfile, uploadProfilePhoto } = useAuth();
   const [form, setForm] = useState({ name: user.name || "", designation: user.designation || "", email: user.email || "", personalEmail: user.personalEmail || "", phone: user.phone || "", profileImage: user.profileImage || "" });
   const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "", confirmPassword: "" });
+  const [loginLogs, setLoginLogs] = useState([]);
+  const [loginLogsError, setLoginLogsError] = useState("");
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("success");
   const [cropPhoto, setCropPhoto] = useState(null);
   const canEditOfficialEmail = user.role === "HOD";
+
+  useEffect(() => {
+    if (!canEditOfficialEmail) return;
+    api("/auth/me/login-logs")
+      .then((data) => {
+        setLoginLogs(data.logs || []);
+        setLoginLogsError("");
+      })
+      .catch((error) => setLoginLogsError(error.message || "Unable to load login history."));
+  }, [canEditOfficialEmail]);
+
+  function formatLoginDate(value) {
+    if (!value) return "-";
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short"
+    }).format(new Date(value));
+  }
 
   async function saveProfile(event) {
     event.preventDefault();
@@ -5525,6 +5545,32 @@ function ProfilePage({ user }) {
           <button><ShieldCheck size={17} /> Update Password</button>
         </form>
       </section>
+      {canEditOfficialEmail && (
+        <section className="panel profile-login-logs">
+          <div className="profile-form-heading">
+            <h3>Head Login History</h3>
+            <p>Recent sign-ins for this Head account. A new sign-in automatically replaces any older active session.</p>
+          </div>
+          {loginLogsError ? (
+            <p className="error">{loginLogsError}</p>
+          ) : loginLogs.length ? (
+            <div className="login-log-list">
+              {loginLogs.map((log, index) => (
+                <article className="login-log-item" key={`${log.at}-${index}`}>
+                  <div>
+                    <strong>{formatLoginDate(log.at)}</strong>
+                    <span>{log.ipAddress || "-"}</span>
+                  </div>
+                  <p>{log.userAgent || "-"}</p>
+                  {log.current && <span className="current-session-badge">Current session</span>}
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="subtle">No login history has been recorded yet.</p>
+          )}
+        </section>
+      )}
       {cropPhoto && (
         <ProfilePhotoCropper
           source={cropPhoto}

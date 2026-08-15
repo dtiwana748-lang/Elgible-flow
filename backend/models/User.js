@@ -19,6 +19,12 @@ const userSchema = new mongoose.Schema(
     authorityLinkExpiresAt: { type: Date, select: false },
     authorityLinkLastUsedAt: Date,
     lastLoginAt: Date,
+    loginLogs: [{
+      at: { type: Date, default: Date.now },
+      ipAddress: { type: String, trim: true },
+      userAgent: { type: String, trim: true },
+      sessionId: { type: String, trim: true }
+    }],
     activeSessionId: { type: String, select: false },
     sessionExpiresAt: { type: Date, select: false },
     lastSeenAt: Date

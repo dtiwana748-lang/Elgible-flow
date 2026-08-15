@@ -96,7 +96,7 @@ export default function Login({ authMessage = "" }) {
                 <Mail size={18} className="input-icon" />
                 <input
                   type="email"
-                  placeholder="ravneetXcgc@gmail.com"
+                  placeholder="abc@Dcpd.in"
                   value={form.email}
                   onChange={(event) => setForm({ ...form, email: event.target.value })}
                   required

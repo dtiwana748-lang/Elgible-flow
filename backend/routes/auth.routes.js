@@ -114,13 +114,29 @@ function authUserPayload(user) {
   return { id: user._id, name: user.name, email: user.email, role: user.role, designation: user.designation, profileImage: user.profileImage, personalEmail: user.personalEmail, phone: user.phone };
 }
 
-async function startSession(user) {
+function requestIp(req) {
+  return String(req.headers["x-forwarded-for"] || req.ip || "")
+    .split(",")[0]
+    .trim();
+}
+
+async function startSession(user, req) {
   const sessionId = crypto.randomBytes(24).toString("hex");
   user.lastLoginAt = new Date();
   user.lastSeenAt = new Date();
   user.activeSessionId = sessionId;
   user.sessionExpiresAt = new Date(Date.now() + SESSION_IDLE_MS);
+  user.loginLogs = [
+    {
+      at: new Date(),
+      ipAddress: requestIp(req),
+      userAgent: String(req.headers["user-agent"] || "").slice(0, 240),
+      sessionId
+    },
+    ...(user.loginLogs || [])
+  ].slice(0, 25);
   await user.save();
+  await writeAudit({ actor: user._id, action: "LOGIN_SUCCESS", entity: "User", entityId: user._id, ipAddress: requestIp(req), metadata: { userAgent: req.headers["user-agent"] } });
   return { token: signToken(user, sessionId), user: authUserPayload(user) };
 }
 
@@ -146,7 +162,7 @@ router.post("/login", async (req, res) => {
     return res.status(401).json({ message: "Invalid credentials" });
   }
   loginAttempts.delete(key);
-  res.json(await startSession(user));
+  res.json(await startSession(user, req));
 });
 
 router.post("/authority/:token", async (req, res) => {
@@ -162,7 +178,7 @@ router.post("/authority/:token", async (req, res) => {
   }).select("+activeSessionId +sessionExpiresAt +authorityLinkTokenHash +authorityLinkExpiresAt");
   if (!user) return res.status(401).json({ message: "This authority link is invalid or expired" });
   user.authorityLinkLastUsedAt = new Date();
-  res.json(await startSession(user));
+  res.json(await startSession(user, req));
 });
 
 router.post("/logout", requireAuth, async (req, res) => {
@@ -175,6 +191,19 @@ router.post("/logout", requireAuth, async (req, res) => {
 
 router.get("/me", requireAuth, (req, res) => {
   res.json({ id: req.user._id, name: req.user.name, email: req.user.email, role: req.user.role, designation: req.user.designation, profileImage: req.user.profileImage, personalEmail: req.user.personalEmail, phone: req.user.phone });
+});
+
+router.get("/me/login-logs", requireAuth, async (req, res) => {
+  if (req.user.role !== "HOD") return res.status(403).json({ message: "Only the Head can view login history" });
+  const user = await User.findById(req.user._id).select("+activeSessionId loginLogs");
+  res.json({
+    logs: (user?.loginLogs || []).map((log) => ({
+      at: log.at,
+      ipAddress: log.ipAddress || "-",
+      userAgent: log.userAgent || "-",
+      current: Boolean(log.sessionId && log.sessionId === user.activeSessionId)
+    }))
+  });
 });
 
 router.patch("/me", requireAuth, async (req, res) => {
