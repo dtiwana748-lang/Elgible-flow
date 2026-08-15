@@ -836,6 +836,20 @@ function ManagersPage() {
   const [showForm, setShowForm] = useState(false);
   const [authorityLink, setAuthorityLink] = useState("");
 
+  function displayAuthorityLink(link) {
+    if (!link) return "";
+    try {
+      const url = new URL(link);
+      const isLocalhostLink = ["localhost", "127.0.0.1"].includes(url.hostname);
+      if (isLocalhostLink && !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+        return `${window.location.origin}${url.pathname}${url.search}${url.hash}`;
+      }
+    } catch {
+      return link;
+    }
+    return link;
+  }
+
   async function load() {
     try {
       setManagers(await api("/users"));
@@ -907,7 +921,7 @@ function ManagersPage() {
       resetManagerForm();
       setMessageType("success");
       if (data.authorityLink) {
-        setAuthorityLink(data.authorityLink);
+        setAuthorityLink(displayAuthorityLink(data.authorityLink));
         setMessage("Higher Authority account created. Copy the secure link below.");
       } else {
         setMessage(wasEditing ? "Placement Officer account updated successfully." : "Placement Officer account created successfully.");
@@ -952,7 +966,7 @@ function ManagersPage() {
   async function generateAuthorityLink(manager) {
     try {
       const result = await api(`/users/${manager.id}/authority-link`, { method: "POST" });
-      setAuthorityLink(result.authorityLink);
+      setAuthorityLink(displayAuthorityLink(result.authorityLink));
       setMessageType("success");
       setMessage(`Secure Higher Authority link generated for ${manager.name}.`);
     } catch (error) {

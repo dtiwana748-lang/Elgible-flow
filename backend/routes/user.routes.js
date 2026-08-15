@@ -12,8 +12,27 @@ function hashAuthorityToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+function cleanOrigin(origin) {
+  return String(origin || "").split(",")[0].trim().replace(/\/+$/, "");
+}
+
+function isLocalOrigin(origin) {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin || "");
+}
+
 function publicOrigin(req) {
-  return (process.env.CLIENT_ORIGIN || `${req.protocol}://${req.get("host")}`).split(",")[0].trim().replace(/\/+$/, "");
+  const requestOrigin = cleanOrigin(req.get("origin"));
+  if (requestOrigin && !isLocalOrigin(requestOrigin)) return requestOrigin;
+
+  const configuredOrigin = cleanOrigin(process.env.CLIENT_ORIGIN);
+  const requestHostOrigin = cleanOrigin(`${req.protocol}://${req.get("host")}`);
+  const renderOrigin = cleanOrigin(process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_SERVER_URL || process.env.SERVER_URL);
+
+  if (configuredOrigin && (!isLocalOrigin(configuredOrigin) || isLocalOrigin(requestHostOrigin))) {
+    return configuredOrigin;
+  }
+  if (renderOrigin && (!isLocalOrigin(renderOrigin) || isLocalOrigin(requestHostOrigin))) return renderOrigin;
+  return requestHostOrigin;
 }
 
 function issueAuthorityLink(user, req) {
