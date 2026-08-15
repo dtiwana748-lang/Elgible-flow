@@ -177,7 +177,7 @@ export default function Login({ authMessage = "" }) {
         </span>
         <span className="login-footer-copy">
           <strong>
-            <span> Empowering Institutions.</span>
+            <span>Empowering Institutions.</span>
           </strong>
           <small>Let's build successful futures.</small>
         </span>
