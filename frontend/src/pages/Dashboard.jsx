@@ -168,7 +168,7 @@ export default function Dashboard() {
   return (
     <main className="app-shell">
       <RoleSidebar nav={nav} active={active} setActive={setActive} user={user} logout={logout} pendingPlannerRequests={pendingPlannerRequests} />
-      <section className="workspace">
+      <section className={`workspace ${isHigherAuthority && (active === "dashboard" || active === "growth") ? "has-authority-overview" : ""} ${(active === "report-cards" || (active === "dashboard" && !isHigherAuthority)) ? "has-prc-v2" : ""}`}>
         {active === "dashboard" && <PlacementPlannerPage user={user} pageType="dashboard" />}
         {active === "managers" && isHod && <ManagersPage />}
         {active === "report-cards" && <PlacementPlannerPage user={user} pageType="report-cards" />}

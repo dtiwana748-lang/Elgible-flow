@@ -14348,14 +14348,14 @@ button.danger,
 
 /* Higher Authorities mobile report pass */
 @media (max-width: 760px) {
-  .workspace:has(.authority-overview-redesign),
-  .workspace:has(.prc-v2-container) {
+  .workspace.has-authority-overview,
+  .workspace.has-prc-v2 {
     padding: 18px 12px calc(96px + env(safe-area-inset-bottom, 0px)) !important;
     background: #f7faff !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar,
-  .workspace:has(.prc-v2-container) .topbar {
+  .workspace.has-authority-overview .topbar,
+  .workspace.has-prc-v2 .topbar {
     display: grid !important;
     grid-template-columns: minmax(0, 1fr) auto 54px !important;
     grid-template-areas:
@@ -14367,14 +14367,14 @@ button.danger,
     padding-top: 2px !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar > div:first-of-type,
-  .workspace:has(.prc-v2-container) .topbar > div:first-of-type {
+  .workspace.has-authority-overview .topbar > div:first-of-type,
+  .workspace.has-prc-v2 .topbar > div:first-of-type {
     grid-area: copy !important;
     min-width: 0 !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .mobile-header-logout,
-  .workspace:has(.prc-v2-container) .mobile-header-logout {
+  .workspace.has-authority-overview .mobile-header-logout,
+  .workspace.has-prc-v2 .mobile-header-logout {
     grid-area: logout !important;
     position: static !important;
     align-self: center !important;
@@ -14383,8 +14383,8 @@ button.danger,
     justify-content: center !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar h2,
-  .workspace:has(.prc-v2-container) .topbar h2 {
+  .workspace.has-authority-overview .topbar h2,
+  .workspace.has-prc-v2 .topbar h2 {
     max-width: 100% !important;
     margin-top: 7px !important;
     font-size: clamp(25px, 7.2vw, 32px) !important;
@@ -14394,29 +14394,29 @@ button.danger,
     word-break: normal !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar .subtle,
-  .workspace:has(.prc-v2-container) .topbar .subtle {
+  .workspace.has-authority-overview .topbar .subtle,
+  .workspace.has-prc-v2 .topbar .subtle {
     max-width: 29rem !important;
     margin-top: 8px !important;
     font-size: 14px !important;
     line-height: 1.38 !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar .eyebrow,
-  .workspace:has(.prc-v2-container) .topbar .eyebrow {
+  .workspace.has-authority-overview .topbar .eyebrow,
+  .workspace.has-prc-v2 .topbar .eyebrow {
     font-size: 10px !important;
     line-height: 1.2 !important;
     letter-spacing: .16em !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar-actions,
-  .workspace:has(.prc-v2-container) .topbar-actions {
+  .workspace.has-authority-overview .topbar-actions,
+  .workspace.has-prc-v2 .topbar-actions {
     grid-area: actions !important;
     display: contents !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar-actions .header-profile,
-  .workspace:has(.prc-v2-container) .topbar-actions .header-profile {
+  .workspace.has-authority-overview .topbar-actions .header-profile,
+  .workspace.has-prc-v2 .topbar-actions .header-profile {
     grid-area: avatar !important;
     width: 54px !important;
     height: 54px !important;
@@ -14427,18 +14427,18 @@ button.danger,
     box-shadow: 0 14px 30px rgba(7, 27, 58, .16) !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar-actions .header-profile span,
-  .workspace:has(.prc-v2-container) .topbar-actions .header-profile span {
+  .workspace.has-authority-overview .topbar-actions .header-profile span,
+  .workspace.has-prc-v2 .topbar-actions .header-profile span {
     font-size: 18px !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar-actions > button,
-  .workspace:has(.prc-v2-container) .topbar-actions > button {
+  .workspace.has-authority-overview .topbar-actions > button,
+  .workspace.has-prc-v2 .topbar-actions > button {
     grid-area: actions !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .planner-yearbar,
-  .workspace:has(.prc-v2-container) .planner-yearbar {
+  .workspace.has-authority-overview .planner-yearbar,
+  .workspace.has-prc-v2 .planner-yearbar {
     display: grid !important;
     grid-template-columns: 1fr !important;
     gap: 12px !important;
@@ -14926,18 +14926,18 @@ button.danger,
 }
 
 @media (max-width: 380px) {
-  .workspace:has(.authority-overview-redesign) .topbar,
-  .workspace:has(.prc-v2-container) .topbar {
+  .workspace.has-authority-overview .topbar,
+  .workspace.has-prc-v2 .topbar {
     grid-template-columns: minmax(0, 1fr) 48px !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar h2,
-  .workspace:has(.prc-v2-container) .topbar h2 {
+  .workspace.has-authority-overview .topbar h2,
+  .workspace.has-prc-v2 .topbar h2 {
     font-size: 24px !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar-actions .header-profile,
-  .workspace:has(.prc-v2-container) .topbar-actions .header-profile {
+  .workspace.has-authority-overview .topbar-actions .header-profile,
+  .workspace.has-prc-v2 .topbar-actions .header-profile {
     width: 48px !important;
     height: 48px !important;
   }
@@ -15027,7 +15027,7 @@ button.danger,
 @media (max-width: 760px) {
   .authority-overview-redesign,
   .authority-overview-redesign *,
-  .workspace:has(.authority-overview-redesign) {
+  .workspace.has-authority-overview {
     max-width: 100% !important;
     min-width: 0 !important;
     box-sizing: border-box !important;
@@ -15126,16 +15126,16 @@ button.danger,
 
 /* Final Higher Authority mobile visibility polish */
 @media (max-width: 760px) {
-  .workspace:has(.authority-overview-redesign) .topbar,
-  .workspace:has(.prc-v2-container) .topbar {
+  .workspace.has-authority-overview .topbar,
+  .workspace.has-prc-v2 .topbar {
     min-height: 44px !important;
     margin-bottom: 6px !important;
     align-items: start !important;
     position: relative !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar > div:first-of-type,
-  .workspace:has(.prc-v2-container) .topbar > div:first-of-type {
+  .workspace.has-authority-overview .topbar > div:first-of-type,
+  .workspace.has-prc-v2 .topbar > div:first-of-type {
     display: block !important;
     align-self: center !important;
     position: relative !important;
@@ -15143,13 +15143,13 @@ button.danger,
     padding-left: 44px !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar > div:first-of-type > *,
-  .workspace:has(.prc-v2-container) .topbar > div:first-of-type > * {
+  .workspace.has-authority-overview .topbar > div:first-of-type > *,
+  .workspace.has-prc-v2 .topbar > div:first-of-type > * {
     display: none !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar > div:first-of-type::before,
-  .workspace:has(.prc-v2-container) .topbar > div:first-of-type::before {
+  .workspace.has-authority-overview .topbar > div:first-of-type::before,
+  .workspace.has-prc-v2 .topbar > div:first-of-type::before {
     content: "Placement Report" !important;
     display: block !important;
     color: transparent !important;
@@ -15164,8 +15164,8 @@ button.danger,
     width: max-content !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar > div:first-of-type::after,
-  .workspace:has(.prc-v2-container) .topbar > div:first-of-type::after {
+  .workspace.has-authority-overview .topbar > div:first-of-type::after,
+  .workspace.has-prc-v2 .topbar > div:first-of-type::after {
     content: "" !important;
     position: absolute !important;
     left: 0 !important;
@@ -15177,13 +15177,13 @@ button.danger,
     filter: drop-shadow(0 8px 14px rgba(7, 27, 58, .12)) !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar-actions,
-  .workspace:has(.prc-v2-container) .topbar-actions {
+  .workspace.has-authority-overview .topbar-actions,
+  .workspace.has-prc-v2 .topbar-actions {
     /* Removed absolute positioning hack to let grid layout work correctly */
   }
 
-  .workspace:has(.authority-overview-redesign) .topbar-actions .header-profile,
-  .workspace:has(.prc-v2-container) .topbar-actions .header-profile {
+  .workspace.has-authority-overview .topbar-actions .header-profile,
+  .workspace.has-prc-v2 .topbar-actions .header-profile {
     width: 46px !important;
     height: 46px !important;
     position: static !important;
@@ -15191,8 +15191,8 @@ button.danger,
     margin: 0 !important;
   }
 
-  .workspace:has(.authority-overview-redesign) .planner-yearbar,
-  .workspace:has(.prc-v2-container) .planner-yearbar {
+  .workspace.has-authority-overview .planner-yearbar,
+  .workspace.has-prc-v2 .planner-yearbar {
     margin-top: 0 !important;
   }
 
