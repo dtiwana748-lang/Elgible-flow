@@ -264,7 +264,7 @@ function PageHeader({ eyebrow, title, subtitle, children }) {
         <LogOut size={19} />
       </button>}
       <div>
-        <p className="eyebrow">{eyebrow}</p>
+        {eyebrow && <p className="eyebrow">{eyebrow}</p>}
         <h2>{title}</h2>
         {subtitle && <p className="subtle">{subtitle}</p>}
       </div>
@@ -1050,7 +1050,7 @@ function ManagersPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Team Administration" title="Manager" subtitle="Create and manage Outreach Member and Placement Officer accounts">
+      <PageHeader title="Manager" subtitle="Create and manage">
         <button onClick={() => setShowForm(true)}><UserPlus size={17} /> Add Team Member</button>
       </PageHeader>
       {message && <div className={`notice manager-notice ${messageType === "error" ? "error" : "success"}`} role="status">{message}</div>}
