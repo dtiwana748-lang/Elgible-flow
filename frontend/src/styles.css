@@ -14420,9 +14420,9 @@ button.danger,
     grid-area: avatar !important;
     width: 54px !important;
     height: 54px !important;
-    align-self: start !important;
+    align-self: center !important;
     justify-self: end !important;
-    margin: 6px 0 0 !important;
+    margin: 0 !important;
     border: 2px solid #ffffff !important;
     box-shadow: 0 14px 30px rgba(7, 27, 58, .16) !important;
   }
@@ -15156,10 +15156,11 @@ button.danger,
     background: linear-gradient(90deg, #c90d18 0 34%, #073a78 38% 100%) !important;
     -webkit-background-clip: text !important;
     background-clip: text !important;
-    font-size: 24px !important;
+    font-size: clamp(20px, 6vw, 24px) !important;
     font-weight: 950 !important;
     line-height: 1.05 !important;
     letter-spacing: 0 !important;
+    white-space: nowrap !important;
   }
 
   .workspace:has(.authority-overview-redesign) .topbar > div:first-of-type::after,
