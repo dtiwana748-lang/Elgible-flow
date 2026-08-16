@@ -342,72 +342,77 @@ router.delete("/planner/source", requireAuth, requireRole("HOD"), async (req, re
 });
 
 router.get("/planner/report", requireAuth, async (req, res) => {
-  const years = await PlacementRecord.distinct("academicYear");
-  const sortedYears = years.map(String).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-  const academicYear = String(req.query.academicYear || sortedYears[0] || "");
-  const filter = academicYear ? { academicYear } : {};
-  const designation = String(req.user.designation || "").toLowerCase();
-  const normalizePerson = value => {
-    const cleaned = String(value || "").trim().toLowerCase().replace(/\./g, "").replace(/\s+/g, " ");
-    if (!cleaned) return "";
-    if (cleaned.includes("jagdeep")) return "jagdeep";
-    if (cleaned.includes("drashti") || cleaned.includes("drashti shamra") || cleaned.includes("drashti sharma")) return "drashti";
-    if (cleaned.includes("garima") || cleaned.includes("gramia")) return "garima";
-    if (cleaned.includes("abhilasha") || cleaned.includes("abhilasa")) return "abhilasha";
-    if (cleaned.includes("evp") || cleaned.includes("sushil") || cleaned.includes("parashar") || cleaned.includes("prashar")) return "sushil parashar";
-    if (cleaned.includes("avleen") || cleaned.includes("avaleen")) return "avleen kaur";
-    if (cleaned.includes("manish")) return "manish";
-    const aliases = {
-      "manish sir": "manish",
-      "mr manish": "manish",
-      "avleen mam": "avleen kaur",
-      "avleen maam": "avleen kaur",
-      "evp sir": "sushil parashar",
-      "mr sushil parashar": "sushil parashar"
+  try {
+    const years = await PlacementRecord.distinct("academicYear");
+    const sortedYears = years.map(String).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    const academicYear = String(req.query.academicYear || sortedYears[0] || "");
+    const filter = academicYear ? { academicYear } : {};
+    const designation = String(req.user.designation || "").toLowerCase();
+    const normalizePerson = value => {
+      const cleaned = String(value || "").trim().toLowerCase().replace(/\./g, "").replace(/\s+/g, " ");
+      if (!cleaned) return "";
+      if (cleaned.includes("jagdeep")) return "jagdeep";
+      if (cleaned.includes("drashti") || cleaned.includes("drashti shamra") || cleaned.includes("drashti sharma")) return "drashti";
+      if (cleaned.includes("garima") || cleaned.includes("gramia")) return "garima";
+      if (cleaned.includes("abhilasha") || cleaned.includes("abhilasa")) return "abhilasha";
+      if (cleaned.includes("evp") || cleaned.includes("sushil") || cleaned.includes("parashar") || cleaned.includes("prashar")) return "sushil parashar";
+      if (cleaned.includes("avleen") || cleaned.includes("avaleen")) return "avleen kaur";
+      if (cleaned.includes("manish")) return "manish";
+      const aliases = {
+        "manish sir": "manish",
+        "mr manish": "manish",
+        "avleen mam": "avleen kaur",
+        "avleen maam": "avleen kaur",
+        "evp sir": "sushil parashar",
+        "mr sushil parashar": "sushil parashar"
+      };
+      return aliases[cleaned] || cleaned.replace(/^mr\s+/, "");
     };
-    return aliases[cleaned] || cleaned.replace(/^mr\s+/, "");
-  };
-  if (req.user.role !== "HOD") {
-    const canonicalName = normalizePerson(req.user.name);
-    const aliasMap = {
-      jagdeep: ["Jagdeep", "Jagdeep Sharma", "Jagdeep Sharma sir", "Jagdeep Sharma Sir", "Jagdeep Sharma ji", "Jagdeep Sharma jii", "Jagdeep Sharma Jii"],
-      drashti: ["Drashti", "Drashti Sharma", "Drashti Shamra", "Drashti sharma", "Drashti shamra"],
-      garima: ["Garima", "Gramia", "Garima Sharma", "Garima Sareen", "Garima Saren", "Garima sareen", "Garima sharma"],
-      abhilasha: ["Abhilasha", "Abhilasha Mam", "Abhilasha mam", "Abhilasha Maam", "Abhilasha maam", "Abhilasha ma'am", "Abhilasha Ma'am", "Abhilasha Madam", "Abhilasha madam"],
-      manish: ["Manish sir", "Manish Sir", "Mr. Manish", "Manish"],
-      "avleen kaur": ["Avleen mam", "Avleen maam", "Avleen Mam", "Avleen Kaur", "Avale(en) mam", "Avale(en) Mam", "Avale(en) ma'am", "Avleen Mam Manish Sir"],
-      "sushil parashar": ["EVP Sir", "EVP sir", "EVP SIR", "Mr. Sushil Parashar", "Sushil Parashar", "Sushil Prashar", "Sushil prashahr"]
+    if (req.user.role !== "HOD") {
+      const canonicalName = normalizePerson(req.user.name);
+      const aliasMap = {
+        jagdeep: ["Jagdeep", "Jagdeep Sharma", "Jagdeep Sharma sir", "Jagdeep Sharma Sir", "Jagdeep Sharma ji", "Jagdeep Sharma jii", "Jagdeep Sharma Jii"],
+        drashti: ["Drashti", "Drashti Sharma", "Drashti Shamra", "Drashti sharma", "Drashti shamra"],
+        garima: ["Garima", "Gramia", "Garima Sharma", "Garima Sareen", "Garima Saren", "Garima sareen", "Garima sharma"],
+        abhilasha: ["Abhilasha", "Abhilasha Mam", "Abhilasha mam", "Abhilasha Maam", "Abhilasha maam", "Abhilasha ma'am", "Abhilasha Ma'am", "Abhilasha Madam", "Abhilasha madam"],
+        manish: ["Manish sir", "Manish Sir", "Mr. Manish", "Manish"],
+        "avleen kaur": ["Avleen mam", "Avleen maam", "Avleen Mam", "Avleen Kaur", "Avale(en) mam", "Avale(en) Mam", "Avale(en) ma'am", "Avleen Mam Manish Sir"],
+        "sushil parashar": ["EVP Sir", "EVP sir", "EVP SIR", "Mr. Sushil Parashar", "Sushil Parashar", "Sushil Prashar", "Sushil prashahr"]
+      };
+      const names = aliasMap[canonicalName] || [req.user.name];
+      const nameRegex = { $in: names.map(name => new RegExp(`^${escapeRegex(name)}$`, "i")) };
+      if (designation.includes("outreach") || designation.includes("higher")) filter.leadBy = nameRegex;
+      else filter.placementOfficer = nameRegex;
+    }
+    const comparisonFilter = { ...filter };
+    delete comparisonFilter.academicYear;
+    const records = await PlacementRecord.find(filter).sort({ sourceSheetId: 1, sourceSheetGid: 1, sourceRow: 1, ron: 1, createdAt: 1 }).lean();
+    const comparisonRecords = await PlacementRecord.find(comparisonFilter).sort({ academicYear: -1, sourceSheetId: 1, sourceSheetGid: 1, sourceRow: 1, ron: 1, createdAt: 1 }).lean();
+    const summarize = list => {
+      const closed = list.filter(r => /closed|complete|selected/i.test(r.actualStatus || ""));
+      const inProcess = list.filter(r => /process|open|ongoing|pending|floated/i.test(r.actualStatus || ""));
+      return { floated: list.length, closed: closed.length, inProcess: inProcess.length, selections: list.reduce((sum, r) => sum + (r.selections || 0), 0), eligible: list.reduce((sum, r) => sum + (r.totalEligible || 0), 0), registered: list.reduce((sum, r) => sum + (r.totalRegistered || 0), 0), highestPackage: Math.max(0, ...list.map(r => r.packageLpa || 0)) };
     };
-    const names = aliasMap[canonicalName] || [req.user.name];
-    const nameRegex = { $in: names.map(name => new RegExp(`^${escapeRegex(name)}$`, "i")) };
-    if (designation.includes("outreach") || designation.includes("higher")) filter.leadBy = nameRegex;
-    else filter.placementOfficer = nameRegex;
+    const groupedComparison = field => comparisonRecords.reduce((map, record) => {
+      const name = record[field] || "Unassigned";
+      const key = normalizePerson(name) || name;
+      (map[key] ||= []).push(record);
+      return map;
+    }, {});
+    const group = field => {
+      const comparisonByName = groupedComparison(field);
+      return Object.values(records.reduce((map, record) => { const name = record[field] || "Unassigned"; (map[name] ||= { name, records: [] }).records.push(record); return map; }, {})).map(item => {
+        const key = normalizePerson(item.name) || item.name;
+        return { ...item, comparisonRecords: comparisonByName[key] || item.records, summary: summarize(item.records) };
+      });
+    };
+    const requestFilter = req.user.role === "HOD" ? {} : { requester: req.user._id };
+    const requests = await PlacementEditRequest.find(requestFilter).populate("record", "companyName jobProfile academicYear placementOfficer leadBy batch").populate("requester", "name designation").sort({ createdAt: -1 }).lean();
+    res.json({ academicYear, years: sortedYears, summary: summarize(records), officerReports: group("placementOfficer"), outreachReports: group("leadBy"), records, comparisonRecords, requests });
+  } catch (error) {
+    console.error("Error in /planner/report:", error);
+    res.status(500).json({ message: "Internal server error fetching report" });
   }
-  const comparisonFilter = { ...filter };
-  delete comparisonFilter.academicYear;
-  const records = await PlacementRecord.find(filter).sort({ sourceSheetId: 1, sourceSheetGid: 1, sourceRow: 1, ron: 1, createdAt: 1 }).lean();
-  const comparisonRecords = await PlacementRecord.find(comparisonFilter).sort({ academicYear: -1, sourceSheetId: 1, sourceSheetGid: 1, sourceRow: 1, ron: 1, createdAt: 1 }).lean();
-  const summarize = list => {
-    const closed = list.filter(r => /closed|complete|selected/i.test(r.actualStatus || ""));
-    const inProcess = list.filter(r => /process|open|ongoing|pending|floated/i.test(r.actualStatus || ""));
-    return { floated: list.length, closed: closed.length, inProcess: inProcess.length, selections: list.reduce((sum, r) => sum + (r.selections || 0), 0), eligible: list.reduce((sum, r) => sum + (r.totalEligible || 0), 0), registered: list.reduce((sum, r) => sum + (r.totalRegistered || 0), 0), highestPackage: Math.max(0, ...list.map(r => r.packageLpa || 0)) };
-  };
-  const groupedComparison = field => comparisonRecords.reduce((map, record) => {
-    const name = record[field] || "Unassigned";
-    const key = normalizePerson(name) || name;
-    (map[key] ||= []).push(record);
-    return map;
-  }, {});
-  const group = field => {
-    const comparisonByName = groupedComparison(field);
-    return Object.values(records.reduce((map, record) => { const name = record[field] || "Unassigned"; (map[name] ||= { name, records: [] }).records.push(record); return map; }, {})).map(item => {
-      const key = normalizePerson(item.name) || item.name;
-      return { ...item, comparisonRecords: comparisonByName[key] || item.records, summary: summarize(item.records) };
-    });
-  };
-  const requestFilter = req.user.role === "HOD" ? {} : { requester: req.user._id };
-  const requests = await PlacementEditRequest.find(requestFilter).populate("record", "companyName jobProfile academicYear placementOfficer leadBy batch").populate("requester", "name designation").sort({ createdAt: -1 }).lean();
-  res.json({ academicYear, years: sortedYears, summary: summarize(records), officerReports: group("placementOfficer"), outreachReports: group("leadBy"), records, comparisonRecords, requests });
 });
 
 router.get("/planner/edit-requests/pending-count", requireAuth, requireRole("HOD"), async (req, res) => {
