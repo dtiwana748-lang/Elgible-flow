@@ -19576,7 +19576,7 @@ body .target-detail-table td:nth-child(7) {
     grid-template-columns: minmax(0, 1fr) 48px 48px !important;
     grid-template-rows: auto auto !important;
     gap: 16px 8px !important;
-    align-items: flex-start !important;
+    align-items: center !important;
   }
   body .topbar-actions {
     display: contents !important;
@@ -19592,15 +19592,20 @@ body .target-detail-table td:nth-child(7) {
     grid-column: 2 !important;
     grid-row: 1 !important;
     margin: 0 !important;
-    margin-top: 4px !important;
-    align-self: flex-start !important;
+    align-self: center !important;
   }
   body .mobile-header-logout {
     grid-column: 3 !important;
     grid-row: 1 !important;
     margin: 0 !important;
-    margin-top: 4px !important;
-    align-self: flex-start !important;
+    align-self: center !important;
+  }
+
+  .manager-action-btn {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
   }
 
   .modal-overlay, .drawer-overlay {
