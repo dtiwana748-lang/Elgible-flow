@@ -15156,11 +15156,12 @@ button.danger,
     background: linear-gradient(90deg, #c90d18 0 34%, #073a78 38% 100%) !important;
     -webkit-background-clip: text !important;
     background-clip: text !important;
-    font-size: clamp(20px, 6vw, 24px) !important;
+    font-size: clamp(16px, 5.5vw, 22px) !important;
     font-weight: 950 !important;
     line-height: 1.05 !important;
     letter-spacing: 0 !important;
     white-space: nowrap !important;
+    width: max-content !important;
   }
 
   .workspace:has(.authority-overview-redesign) .topbar > div:first-of-type::after,
@@ -15178,12 +15179,7 @@ button.danger,
 
   .workspace:has(.authority-overview-redesign) .topbar-actions,
   .workspace:has(.prc-v2-container) .topbar-actions {
-    display: block !important;
-    position: absolute !important;
-    top: -42px !important;
-    right: 0 !important;
-    width: 46px !important;
-    height: 46px !important;
+    /* Removed absolute positioning hack to let grid layout work correctly */
   }
 
   .workspace:has(.authority-overview-redesign) .topbar-actions .header-profile,
