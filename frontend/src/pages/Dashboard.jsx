@@ -1004,9 +1004,29 @@ function ManagersPage() {
   async function generateAuthorityLink(manager) {
     try {
       const result = await api(`/users/${manager.id}/authority-link`, { method: "POST" });
-      setAuthorityLink(displayAuthorityLink(result.authorityLink));
-      setMessageType("success");
-      setMessage(`Secure Higher Authority link generated for ${manager.name}.`);
+      const newLink = displayAuthorityLink(result.authorityLink);
+      setAuthorityLink(newLink);
+      
+      try {
+        if (navigator.clipboard?.writeText && window.isSecureContext) {
+          await navigator.clipboard.writeText(newLink);
+        } else {
+          const input = document.createElement("textarea");
+          input.value = newLink;
+          input.setAttribute("readonly", "");
+          input.style.position = "fixed";
+          input.style.left = "-9999px";
+          document.body.appendChild(input);
+          input.select();
+          document.execCommand("copy");
+          document.body.removeChild(input);
+        }
+        setMessageType("success");
+        setMessage(`Secure Higher Authority link generated and copied for ${manager.name}.`);
+      } catch {
+        setMessageType("success");
+        setMessage(`Secure Higher Authority link generated for ${manager.name}.`);
+      }
     } catch (error) {
       setMessageType("error");
       setMessage(`Unable to generate secure link: ${error.message}`);
