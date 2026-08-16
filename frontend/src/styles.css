@@ -19548,7 +19548,7 @@ body .target-detail-table td:nth-child(7) {
 /* Mobile Overrides (Appended for fixes) */
 @media (max-width: 760px) {
   .login-page.new-theme .login-content-wrapper {
-    padding: 16px !important;
+    padding: 10px !important;
     align-items: center !important;
     width: 100% !important;
   }
@@ -19556,7 +19556,7 @@ body .target-detail-table td:nth-child(7) {
     width: 100% !important;
     max-width: 100% !important;
     margin: auto !important;
-    padding: 32px 20px !important;
+    padding: 32px 14px !important;
   }
   .login-page.new-theme .login-options-row {
     flex-direction: column !important;
