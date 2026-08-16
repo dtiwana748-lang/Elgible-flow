@@ -19623,3 +19623,10 @@ body .target-detail-table td:nth-child(7) {
     overflow: visible !important;
   }
 }
+
+/* Responsive Text Utilities */
+.mobile-only { display: none !important; }
+@media (max-width: 760px) {
+  .desktop-only { display: none !important; }
+  .mobile-only { display: inline !important; }
+}

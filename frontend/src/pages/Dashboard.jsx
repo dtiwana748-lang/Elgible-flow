@@ -1050,7 +1050,16 @@ function ManagersPage() {
 
   return (
     <>
-      <PageHeader title="Manager" subtitle="Create and manage">
+      <PageHeader 
+        eyebrow={<span className="desktop-only">Team Administration</span>}
+        title="Manager" 
+        subtitle={
+          <>
+            <span className="desktop-only">Create and manage Outreach Member and Placement Officer accounts</span>
+            <span className="mobile-only">Create and manage</span>
+          </>
+        }
+      >
         <button onClick={() => setShowForm(true)}><UserPlus size={17} /> Add Team Member</button>
       </PageHeader>
       {message && <div className={`notice manager-notice ${messageType === "error" ? "error" : "success"}`} role="status">{message}</div>}
