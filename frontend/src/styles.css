@@ -7881,16 +7881,30 @@ button.danger,
 }
 
 .report-summary-detail .stat-detail-table td:hover {
-  overflow: visible !important;
+  overflow: hidden !important;
 }
 
 .report-summary-detail .stat-detail-table input:hover,
 .report-summary-detail .stat-detail-table input:focus {
   position: relative !important;
   z-index: 30 !important;
-  min-width: min(520px, 48vw) !important;
+  width: 100% !important;
+  min-width: 0 !important;
   background: #ffffff !important;
   box-shadow: 0 12px 26px rgba(7, 20, 38, .18) !important;
+}
+
+.report-summary-detail .stat-detail-table input {
+  max-width: 100% !important;
+}
+
+.report-summary-detail .stat-detail-table td {
+  vertical-align: top !important;
+}
+
+.report-summary-detail .stat-detail-table td,
+.report-summary-detail .stat-detail-table td * {
+  overflow-wrap: anywhere !important;
 }
 
 .placement-sheet-wrap th,
