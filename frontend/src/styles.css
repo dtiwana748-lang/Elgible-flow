@@ -2724,13 +2724,23 @@ tbody tr:hover { background: #f8fafc; }
 }
 
 .planner-msg {
-  display: inline-block;
-  margin-top: 8px;
-  padding: 4px 12px;
-  background: var(--green);
-  border-radius: 12px;
-  font-size: 12px;
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  padding: 14px 24px;
+  background: #10b981;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
   color: white;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+  z-index: 9999;
+  animation: toastFadeIn 0.3s ease-out forwards;
+}
+
+@keyframes toastFadeIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .planner-grid-wrap {
@@ -6081,19 +6091,37 @@ thead th {
   overflow: hidden;
 }
 
+.placement-sheet-editor .header-action-btn {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.placement-sheet-editor .header-action-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.placement-sheet-editor .header-action-btn svg {
+  stroke: currentColor;
+}
+
 .placement-sheet-editor .editable-planner-header {
-  background: #073b78 !important;
   border-bottom: 0;
 }
 
 .placement-sheet-editor .editable-planner-header h3,
 .placement-sheet-editor .editable-planner-header p {
   color: #ffffff !important;
-}
-
-.placement-sheet-editor .planner-msg {
-  color: #ffffff;
-  background: rgba(216, 11, 31, 0.92);
 }
 
 .placement-sheet-wrap {
@@ -6637,6 +6665,7 @@ button.danger,
 .placement-sheet-wrap td {
   padding: 10px !important;
   vertical-align: middle !important;
+  text-align: center !important;
 }
 .placement-sheet-wrap th {
   color: #ffffff !important;
@@ -6644,6 +6673,7 @@ button.danger,
   font-size: 12px !important;
   line-height: 1.25 !important;
   white-space: normal !important;
+  text-align: center !important;
 }
 .placement-sheet-wrap td:nth-child(5),
 .placement-sheet-wrap td:nth-child(14),
@@ -9149,6 +9179,7 @@ button.danger,
   font-size: 14px;
   font-weight: 800;
   box-shadow: none;
+  box-sizing: border-box;
 }
 
 .edit-request-builder textarea {
@@ -19846,13 +19877,83 @@ body .target-detail-table td:nth-child(7) {
   border-color: var(--placement-red);
 }
 
-.placement-add-row-panel .form-grid {
+.placement-add-row-panel.redesign .form-grid {
   grid-template-columns: repeat(4, minmax(180px, 1fr));
-  gap: 16px 18px;
+  gap: 24px;
   align-items: start;
 }
 
-.placement-add-row-panel .wide { grid-column: span 2; }
+.placement-add-row-panel.redesign .modern-grid label {
+  color: #334155 !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  gap: 8px !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.placement-add-row-panel.redesign .modern-grid input,
+.placement-add-row-panel.redesign .modern-grid select,
+.placement-add-row-panel.redesign .modern-grid textarea,
+.placement-add-row-panel.redesign .modern-grid .multi-select-dropdown > div:first-child {
+  border-radius: 6px !important;
+  border: 1px solid #cbd5e1 !important;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+  font-weight: 500 !important;
+  color: #0f172a !important;
+  min-height: 44px !important;
+  padding: 10px 12px !important;
+  background: #ffffff !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.placement-add-row-panel.redesign .modern-grid textarea {
+  min-height: 100px !important;
+  resize: vertical !important;
+}
+
+.placement-add-row-panel.redesign .modern-grid input:focus,
+.placement-add-row-panel.redesign .modern-grid select:focus,
+.placement-add-row-panel.redesign .modern-grid textarea:focus {
+  outline: none !important;
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15) !important;
+}
+
+.placement-add-row-panel.redesign .wide { grid-column: span 2; }
+
+.placement-add-row-panel.redesign .sheet-request-actions button[type="submit"] {
+  background: #0f172a !important;
+  border-color: #0f172a !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1) !important;
+  padding: 10px 20px !important;
+  border-radius: 6px !important;
+  font-weight: 600 !important;
+}
+
+.placement-add-row-panel.redesign .sheet-request-actions button[type="submit"]:hover {
+  background: #1e293b !important;
+  border-color: #1e293b !important;
+  transform: translateY(-1px) !important;
+}
+
+.placement-add-row-panel.redesign .sheet-request-actions .soft {
+  background: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #334155 !important;
+  box-shadow: none !important;
+  padding: 10px 20px !important;
+  border-radius: 6px !important;
+  font-weight: 600 !important;
+}
+
+.placement-add-row-panel.redesign .sheet-request-actions .soft:hover {
+  background: #f8fafc !important;
+  border-color: #94a3b8 !important;
+}
 
 .placement-sheet-editor .sheet-request-actions {
   display: flex;
@@ -19913,4 +20014,451 @@ body .target-detail-table td:nth-child(7) {
   .placement-add-row-panel .wide { grid-column: auto; }
   .placement-sheet-editor .sheet-request-actions { display: grid; grid-template-columns: 1fr; }
   .placement-sheet-editor .sheet-request-actions button { width: 100%; }
+}
+
+/* === IMPORT HISTORY HEADER AND TABS === */
+
+.planner-history-panel.redesign {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  background: #ffffff !important;
+  border-radius: 12px !important;
+  padding: 24px !important;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05) !important;
+  border: 1px solid #e2e8f0 !important;
+  margin-top: 24px !important;
+}
+
+.planner-history-header-flex {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 24px;
+  gap: 16px;
+}
+
+.planner-history-intro {
+  margin: 0 !important;
+}
+
+.planner-history-intro h3 {
+  font-size: 24px !important;
+  color: #0f172a !important;
+  font-weight: 700 !important;
+  margin: 0 !important;
+}
+
+.planner-history-navigation {
+  display: inline-flex;
+  gap: 16px;
+}
+
+.planner-history-navigation .tab-button {
+  padding: 8px 24px !important;
+  background: #ffffff !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #475569 !important;
+  font-weight: 600 !important;
+  font-size: 14px !important;
+  border-radius: 20px !important;
+  cursor: pointer !important;
+  transition: all 0.2s !important;
+}
+
+.planner-history-navigation .tab-button:hover {
+  background: #f8fafc !important;
+  border-color: #94a3b8 !important;
+  color: #0f172a !important;
+}
+
+.planner-history-navigation .tab-button.active {
+  background: #0f172a !important;
+  color: #ffffff !important;
+  border-color: #0f172a !important;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1) !important;
+}
+
+.progress-year-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.progress-year-tabs .year-tab-button {
+  padding: 8px 16px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 20px;
+  color: #475569;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.progress-year-tabs .year-tab-button:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.progress-year-tabs .year-tab-button.active {
+  background: #0f172a;
+  color: #ffffff;
+  border-color: #0f172a;
+}
+
+/* === IMPORT HISTORY REDESIGN === */
+
+.planner-history-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
+  align-items: stretch;
+}
+
+.progress-sheet-card.redesign {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+  transition: box-shadow 0.2s, transform 0.2s;
+  text-align: left;
+}
+
+.progress-sheet-card.redesign:hover {
+  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+  transform: translateY(-2px);
+}
+
+.progress-sheet-card.redesign .progress-sheet-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.progress-sheet-card.redesign .sheet-icon {
+  color: #3b82f6;
+  flex-shrink: 0;
+}
+
+.progress-sheet-card.redesign .progress-sheet-title-area {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.progress-sheet-card.redesign .progress-sheet-title-area strong {
+  font-size: 16px;
+  color: #0f172a;
+  line-height: 1.3;
+}
+
+.progress-sheet-card.redesign .progress-sheet-title-area small {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.progress-sheet-card.redesign .progress-sheet-divider {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 0;
+}
+
+.progress-sheet-card.redesign .progress-sheet-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.progress-sheet-card.redesign .metric-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.progress-sheet-card.redesign .metric-block small {
+  font-size: 11px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.progress-sheet-card.redesign .metric-block span {
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.progress-sheet-card.redesign .progress-sheet-metadata {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #f8fafc;
+  padding: 16px;
+  border-radius: 8px;
+  flex-grow: 1;
+}
+
+.progress-sheet-card.redesign .meta-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.progress-sheet-card.redesign .meta-row small {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.progress-sheet-card.redesign .meta-row p {
+  font-size: 13px;
+  color: #334155;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.progress-sheet-card.redesign .aligned-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.progress-sheet-card.redesign .aligned-actions button,
+.progress-sheet-card.redesign .aligned-actions a {
+  flex: 1;
+  min-width: 80px;
+  padding: 8px 10px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155 !important;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
+}
+
+.progress-sheet-card.redesign .aligned-actions button:hover,
+.progress-sheet-card.redesign .aligned-actions a:hover {
+  background: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+
+.progress-sheet-card.redesign .aligned-actions .danger-action {
+  color: #dc2626 !important;
+  border-color: #fca5a5 !important;
+  background: #fef2f2 !important;
+}
+
+.progress-sheet-card.redesign .aligned-actions .danger-action:hover {
+  background: #fee2e2 !important;
+}
+
+/* === OFFICERS ENTRY REDESIGN === */
+
+.officers-view-header {
+  margin-bottom: 24px;
+}
+
+.officers-view-title {
+  font-size: 20px;
+  color: #0f172a;
+  margin: 0;
+}
+
+.officers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+  width: 100%;
+}
+
+.officer-profile-card.redesign {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  cursor: pointer;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+  text-align: left;
+}
+
+.officer-profile-card.redesign:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+  border-color: #cbd5e1;
+}
+
+.officer-profile-card.redesign .officer-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  flex-shrink: 0;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+}
+
+.officer-profile-card.redesign .officer-real-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.officer-profile-card.redesign .officer-profile-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-grow: 1;
+}
+
+.officer-profile-card.redesign .officer-profile-info strong {
+  font-size: 16px;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.officer-profile-card.redesign .officer-profile-info span {
+  font-size: 13px;
+  color: #3b82f6;
+  font-weight: 600;
+  background: #eff6ff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  display: inline-block;
+  align-self: flex-start;
+}
+
+.officer-profile-card.redesign .officer-profile-info small {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.officer-detail-view.redesign {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.officer-detail-view.redesign .officer-detail-header {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.officer-detail-view.redesign .back-link {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.officer-detail-view.redesign .back-link:hover {
+  background: #e2e8f0;
+}
+
+.officer-detail-view.redesign .officer-header-titles h3 {
+  font-size: 26px;
+  color: #0f172a;
+  margin: 0 0 6px 0;
+  font-weight: 800;
+}
+
+.officer-detail-view.redesign .officer-header-titles .eyebrow {
+  display: inline-block;
+  font-size: 12px;
+  color: #dc2626;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  background: #fef2f2;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.officer-detail-view.redesign .officer-header-titles p {
+  margin: 0;
+  font-size: 14px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.officer-entries-table-container {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  max-width: 100%;
+}
+
+.officer-entries-table.fixed-layout {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.officer-entries-table.fixed-layout th,
+.officer-entries-table.fixed-layout td {
+  border: 1px solid #e2e8f0;
+}
+
+.officer-entries-table.fixed-layout th {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 14px 16px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.officer-entries-table.fixed-layout td {
+  padding: 16px;
+  font-size: 14px;
+  color: #1e293b;
+  vertical-align: middle;
+}
+
+.officer-entries-table.fixed-layout tr:hover td {
+  background: #f8fafc;
 }

@@ -1,7 +1,7 @@
-﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  BarChart3, Bell, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
+  BarChart3, Bell, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet, ArrowLeft,
   Crop, FileDown, Gauge, GraduationCap, Home, Info, KeyRound, LayoutDashboard, ListChecks, LogOut, MoveHorizontal, MoveVertical, Percent, RefreshCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, UserCog, UserPlus, Users, UsersRound, X, ZoomIn, Calendar, Target
 } from "lucide-react";
 import { api, downloadApiFile } from "../api.js";
@@ -163,6 +163,7 @@ export default function Dashboard() {
     return nav.some(item => item.id === saved) ? saved : defaultActive;
   });
   const [pendingPlannerRequests, setPendingPlannerRequests] = useState(0);
+  const [showAllHistory, setShowAllHistory] = useState(false);
   const setActive = (next) => {
     localStorage.setItem(`placement-report-active-${user.role}`, next);
     setActiveState(next);
@@ -1693,8 +1694,7 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
   const [message, setMessage] = useState("");
   const [requestSearch, setRequestSearch] = useState("");
   const [requestRecordId, setRequestRecordId] = useState("");
-  const [requestField, setRequestField] = useState("companyName");
-  const [requestValue, setRequestValue] = useState("");
+  const [requestUpdates, setRequestUpdates] = useState({});
   const [requestReason, setRequestReason] = useState("");
   const [confirmRemovePlanner, setConfirmRemovePlanner] = useState(false);
   const [confirmSourceDelete, setConfirmSourceDelete] = useState(null);
@@ -1704,6 +1704,9 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
   const [historyEditSource, setHistoryEditSource] = useState("");
   const [historySearch, setHistorySearch] = useState("");
   const [selectedOfficer, setSelectedOfficer] = useState("ALL");
+  const [importHistoryTab, setImportHistoryTab] = useState("progress-sheets");
+  const [importHistoryYear, setImportHistoryYear] = useState(null);
+  const [selectedOfficerDetail, setSelectedOfficerDetail] = useState(null);
   const [selectedBatch, setSelectedBatch] = useState(pageType === "dashboard" ? defaultBatchForYear(currentYear) : "ALL");
   const isHead = user.role === "HOD";
   const isHigherAuthority = String(user.designation || "").toLowerCase().includes("higher");
@@ -1847,14 +1850,11 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
       setMessage("No planner row is available for an edit request.");
       return;
     }
-    const currentValue = String(record[requestField] ?? "");
     await requestCorrection(record, {
-      field: requestField,
-      currentValue,
-      requestedValue: requestValue,
+      requestedUpdates: requestUpdates,
       reason: requestReason
     });
-    setRequestValue("");
+    setRequestUpdates({});
     setRequestReason("");
   }
 
@@ -1916,7 +1916,7 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
   };
   const summarizePlannerRows = list => {
     const closed = list.filter(r => /closed|complete|selected/i.test(r.actualStatus || ""));
-    const inProcess = list.filter(r => /process|open|ongoing|pending|floated/i.test(r.actualStatus || ""));
+    const inProcess = list.filter(r => !/closed|complete|selected/i.test(r.actualStatus || ""));
     return {
       floated: list.length,
       closed: closed.length,
@@ -1979,8 +1979,12 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
     }).sort((a, b) => managerRoleRank(a.name) - managerRoleRank(b.name) || a.name.localeCompare(b.name))
     : [{
       name: user.name,
-      summary: summarizePlannerRows(filteredRecords),
-      records: filteredRecords,
+      summary: summarizePlannerRows(filteredRecords.filter(record => (
+        normalizePerson(record.placementOfficer) === normalizePerson(user.name) || normalizePerson(record.leadBy) === normalizePerson(user.name)
+      ))),
+      records: filteredRecords.filter(record => (
+        normalizePerson(record.placementOfficer) === normalizePerson(user.name) || normalizePerson(record.leadBy) === normalizePerson(user.name)
+      )),
       comparisonRecords: allComparisonRecords.filter(record => (
         normalizePerson(record.placementOfficer) === normalizePerson(user.name) || normalizePerson(record.leadBy) === normalizePerson(user.name)
       )),
@@ -2010,12 +2014,13 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
     return map;
   }, {})).map(item => ({ ...item, batches: [...item.batches], officers: [...item.officers] }))
     .sort((a, b) => new Date(b.uploadedAt || 0) - new Date(a.uploadedAt || 0));
-  const visibleSheetHistory = sheetHistory.filter(item => !historySearch.trim() || [
+  const availableProgressYears = Array.from(new Set(sheetHistory.flatMap(item => item.batches))).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const visibleSheetHistory = sheetHistory.filter(item => item.sourceFile !== "Officer Entry" && (!importHistoryYear || item.batches.includes(importHistoryYear)) && (!historySearch.trim() || [
     item.sourceFile,
     item.batches.join(" "),
     item.officers.join(" "),
     formatDateTime(item.uploadedAt)
-  ].join(" ").toLowerCase().includes(historySearch.trim().toLowerCase()));
+  ].join(" ").toLowerCase().includes(historySearch.trim().toLowerCase())));
   const previewRows = (preview?.rows || []).filter(row => !previewSearch.trim() || Object.values(row).join(" ").toLowerCase().includes(previewSearch.trim().toLowerCase()));
   const previewColumns = (preview?.columns || []).slice(0, 8);
   const historyPreviewRows = filteredRecords
@@ -2225,26 +2230,39 @@ function doPost(e) {
           <label className="edit-request-search">Search planner row
             <div><Search size={16} /><input value={requestSearch} onChange={event => setRequestSearch(event.target.value)} placeholder="Search company, role, batch, status" /></div>
           </label>
-          <label>Planner row
-            <select value={selectedRequestRecord?._id || ""} onChange={event => setRequestRecordId(event.target.value)} required>
+          <label className="wide">Planner row
+            <select value={selectedRequestRecord?._id || ""} onChange={event => { setRequestRecordId(event.target.value); setRequestUpdates({}); }} required>
               {requestRows.map(record => <option key={record._id} value={record._id}>{record.companyName || "Unnamed company"} Â· {record.jobProfile || "No role"} Â· {record.batch || "No batch"}</option>)}
             </select>
           </label>
-          <label>Field to change
-            <select value={requestField} onChange={event => { setRequestField(event.target.value); setRequestValue(""); }} required>
-              {requestFieldOptions.map(field => <option key={field} value={field}>{labelFor(field)}</option>)}
-            </select>
-          </label>
-          <label>Current value
-            <input value={selectedRequestRecord ? String(selectedRequestRecord[requestField] ?? "") : ""} readOnly />
-          </label>
-          <label>Requested value
-            <input value={requestValue} onChange={event => setRequestValue(event.target.value)} placeholder="Enter corrected value" required />
-          </label>
+          {selectedRequestRecord && (
+            <div className="form-grid modern-grid wide" style={{ marginTop: "16px", marginBottom: "16px" }}>
+              {placementSheetColumns.filter(([key]) => key !== "ron" && key !== "actualStatus" && key !== "remarks").map(([key, label, type]) => {
+                const currentVal = String(selectedRequestRecord[key] ?? "");
+                const val = requestUpdates[key] !== undefined ? requestUpdates[key] : currentVal;
+                return (
+                  <label key={key}>{label}
+                    {key === "branch" ? (
+                      <MultiSelectDropdown options={["CSE", "AIML", "AIDS", "ECE", "Robotics & AI", "Blockchain", "Cybersecurity", "BCA", "MCA", "B.Sc Cyber Security", "MBA", "BBA", "B.Com"]} value={val} onChange={newVal => setRequestUpdates(prev => ({ ...prev, [key]: newVal }))} />
+                    ) : ["roles", "companyCategory", "batch"].includes(key) ? (
+                      <select value={val} onChange={e => setRequestUpdates(prev => ({ ...prev, [key]: e.target.value }))}>
+                        <option value="">- Select -</option>
+                        {key === "roles" && <> <option value="Core">Core</option> <option value="Sales">Sales</option> </>}
+                        {key === "companyCategory" && <> <option value="Must Attend">Must Attend</option> <option value="May Attend">May Attend</option> </>}
+                        {key === "batch" && [...Array(10)].map((_, i) => <option key={i} value={2026 + i}>{2026 + i}</option>)}
+                      </select>
+                    ) : (
+                      <input type={type === "date" ? "text" : type} value={val} onChange={e => setRequestUpdates(prev => ({ ...prev, [key]: e.target.value }))} placeholder={currentVal || `Enter ${label}`} />
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          )}
           <label className="wide">Reason
             <textarea value={requestReason} onChange={event => setRequestReason(event.target.value)} placeholder="Explain why this correction is needed" required minLength={5} />
           </label>
-          <button disabled={!selectedRequestRecord || !requestValue || !requestReason}><FileSearch size={17} /> Send Edit Request</button>
+          <button disabled={!selectedRequestRecord || Object.keys(requestUpdates).length === 0 || !requestReason}><FileSearch size={17} /> Send Edit Request</button>
         </form>
       </div>
       <div className="edit-request-history-panel">
@@ -2253,14 +2271,24 @@ function doPost(e) {
           <h3>{pendingRequests} pending request{pendingRequests === 1 ? "" : "s"}</h3>
         </div>
         <div className="edit-request-history-list">
-          {requestHistory.map(item => (
+          {(showAllHistory ? requestHistory : requestHistory.slice(0, 4)).map(item => (
             <article key={item._id}>
               <span className={`request-status ${String(item.status || "").toLowerCase()}`}>{item.status}</span>
               <strong>{item.record?.companyName || "Planner row"}</strong>
-              <p>{item.field ? `${labelFor(item.field)}: ${item.currentValue || "-"} -> ${item.requestedValue || "-"}` : item.reason}</p>
+              <p>
+                {item.requestedUpdates && Object.keys(item.requestedUpdates).length > 0
+                  ? Object.keys(item.requestedUpdates).map(key => `${labelFor(key)}: ${item.requestedUpdates[key]}`).join(", ")
+                  : item.reason}
+              </p>
               <small>{item.reason}</small>
+              {item.createdAt && <div style={{ fontSize: "12px", color: "#64748b", marginTop: "8px" }}>Requested on: {new Date(item.createdAt).toLocaleString()}</div>}
             </article>
           ))}
+          {requestHistory.length > 4 && (
+            <button type="button" onClick={() => setShowAllHistory(!showAllHistory)} style={{ width: "100%", marginTop: "12px", padding: "10px", borderRadius: "8px", background: "transparent", border: "1px dashed #cbd5e1", color: "#334155", fontWeight: "600", cursor: "pointer", transition: "all 0.2s" }} onMouseEnter={e => { e.target.style.background = "#f8fafc"; e.target.style.borderColor = "#94a3b8"; }} onMouseLeave={e => { e.target.style.background = "transparent"; e.target.style.borderColor = "#cbd5e1"; }}>
+              {showAllHistory ? "Show less" : `View all ${requestHistory.length} requests`}
+            </button>
+          )}
           {!requestHistory.length && <EmptyState icon={FileSearch} message="No edit requests sent yet" />}
         </div>
       </div>
@@ -2362,38 +2390,179 @@ function doPost(e) {
     {message && <ToastMessage toast={{ type: /unable|failed|required|no planner|error/i.test(message) ? "error" : "success", message }} onClose={() => setMessage("")} />}
 
     {isHead && pageType === "planner" && !!sheetHistory.length && (
-      <section className="planner-history-panel">
-        <div className="planner-history-intro">
-          <span className="eyebrow">Import history</span>
-          <h3>Linked planner sources</h3>
-          <p>{sheetHistory.length} linked source{sheetHistory.length === 1 ? "" : "s"} for {year || uploadYear}</p>
-        </div>
-        <div className="planner-history-content">
-          <label className="planner-history-search"><Search size={16} /><input value={historySearch} onChange={event => setHistorySearch(event.target.value)} placeholder="Search sheet, batch, date" /></label>
-          <div className="planner-history-list">
-          {visibleSheetHistory.map(item => (
-            <article key={item.sourceFile}>
-              <FileSpreadsheet size={18} />
-              <div>
-                <strong>{item.sourceFile}</strong>
-                <small>Uploaded {formatDateTime(item.uploadedAt)}</small>
-                <span>{item.rows} rows imported{item.firstRow ? `, sheet rows ${item.firstRow}-${item.lastRow}` : ""}{item.batches.length ? ` Â· Batch ${item.batches.join(", ")}` : ""}</span>
-              </div>
-              <div className="planner-history-actions">
-                <button type="button" className="soft" onClick={() => { setHistoryPreviewSearch(""); setHistoryPreviewSource(item.sourceFile); }}><Eye size={15} /> Preview</button>
-                {item.sourceSheetUrl && <a className="soft button-link" href={item.sourceSheetUrl} target="_blank" rel="noreferrer"><FileSpreadsheet size={15} /> Open</a>}
-                {item.sourceSheetUrl && <button type="button" className="soft" onClick={() => syncPlannerSource(item)} disabled={busy}><RefreshCcw size={15} /> Sync</button>}
-                <button type="button" className="soft" onClick={() => setHistoryEditSource(historyEditSource === item.sourceFile ? "" : item.sourceFile)}><Save size={15} /> Edit</button>
-                <button type="button" className="soft" onClick={() => {
-                  const sourceRows = filteredRecords.filter(record => (record.sourceFile || "Uploaded planner file") === item.sourceFile);
-                  downloadPlannerSheet(sourceRows, item.sourceFile.replace(/[^a-z0-9_-]+/gi, "_"));
-                }}><FileDown size={15} /> Download</button>
-                <button type="button" className="soft danger-action" onClick={() => setConfirmSourceDelete(item)} disabled={busy}><Trash2 size={15} /> Delete</button>
-              </div>
-            </article>
-          ))}
-          {!visibleSheetHistory.length && <EmptyState icon={Search} message="No linked sheets match this search" />}
+      <section className="planner-history-panel redesign">
+        <div className="planner-history-header-flex">
+          <div className="planner-history-intro text-center">
+            <h3>Import history</h3>
           </div>
+
+          <div className="planner-history-navigation">
+            <button 
+              type="button" 
+              className={`tab-button ${importHistoryTab === "progress-sheets" ? "active" : ""}`} 
+              onClick={() => { setImportHistoryTab("progress-sheets"); setSelectedOfficerDetail(null); setHistoryEditSource(""); }}
+            >
+              Progress Sheets
+            </button>
+            <button 
+              type="button" 
+              className={`tab-button ${importHistoryTab === "officers-entry" ? "active" : ""}`} 
+              onClick={() => { setImportHistoryTab("officers-entry"); setImportHistoryYear(null); setHistoryEditSource(""); }}
+            >
+              Officers Entry
+            </button>
+          </div>
+        </div>
+
+        <div className="planner-history-content">
+          {importHistoryTab === "progress-sheets" && (
+            <div className="planner-history-list-container">
+              {availableProgressYears.length > 0 && (
+                <div className="progress-year-tabs">
+                  {availableProgressYears.map(yr => (
+                    <button 
+                      key={yr} 
+                      type="button" 
+                      className={`year-tab-button ${importHistoryYear === yr ? "active" : ""}`}
+                      onClick={() => {
+                        setImportHistoryYear(importHistoryYear === yr ? null : yr);
+                        setHistoryEditSource("");
+                        setHistoryPreviewSource("");
+                      }}
+                    >
+                      {yr}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {importHistoryYear && (
+                <div className="planner-history-list">
+                  <h4 className="year-sheets-title text-center">{importHistoryYear} Sheets</h4>
+                  {visibleSheetHistory.map(item => (
+                    <article key={item.sourceFile} className="progress-sheet-card redesign">
+                      <div className="progress-sheet-top">
+                        <FileSpreadsheet size={24} className="sheet-icon" />
+                        <div className="progress-sheet-title-area">
+                          <strong>{item.sourceFile}</strong>
+                          <small>Uploaded {formatDateTime(item.uploadedAt).replace(", ", " · ")}</small>
+                        </div>
+                      </div>
+                      <div className="planner-history-actions aligned-actions">
+                        <button type="button" className="soft secondary-action" onClick={() => { setHistoryPreviewSearch(""); setHistoryPreviewSource(item.sourceFile); }}><Eye size={15} /> Preview</button>
+                        {item.sourceSheetUrl && <a className="soft secondary-action button-link" href={item.sourceSheetUrl} target="_blank" rel="noreferrer"><FileSpreadsheet size={15} /> Open</a>}
+                        {item.sourceSheetUrl && <button type="button" className="soft secondary-action" onClick={() => syncPlannerSource(item)} disabled={busy}><RefreshCcw size={15} /> Sync</button>}
+                        <button type="button" className="soft secondary-action" onClick={() => setHistoryEditSource(historyEditSource === item.sourceFile ? "" : item.sourceFile)}><Save size={15} /> Edit</button>
+                        <button type="button" className="soft secondary-action" onClick={() => {
+                          const sourceRows = filteredRecords.filter(record => (record.sourceFile || "Uploaded planner file") === item.sourceFile);
+                          downloadPlannerSheet(sourceRows, item.sourceFile.replace(/[^a-z0-9_-]+/gi, "_"));
+                        }}><FileDown size={15} /> Download</button>
+                        <button type="button" className="soft danger-action" onClick={() => setConfirmSourceDelete(item)} disabled={busy}><Trash2 size={15} /> Delete</button>
+                      </div>
+                    </article>
+                  ))}
+                  {!visibleSheetHistory.length && <EmptyState icon={Search} message={`No linked sheets match this search for ${importHistoryYear}`} />}
+                </div>
+              )}
+            </div>
+          )}
+
+          {importHistoryTab === "officers-entry" && !selectedOfficerDetail && (
+            <div className="officers-entry-view">
+              <div className="officers-view-header">
+                <h4 className="officers-view-title">All Officers</h4>
+              </div>
+              <div className="officers-grid">
+                {Array.from(new Set(filteredRecords.map(r => r.placementOfficer).filter(Boolean))).map(officerName => {
+                  const officerEntries = filteredRecords.filter(r => r.placementOfficer === officerName);
+                  if (historySearch && !officerName.toLowerCase().includes(historySearch.toLowerCase())) return null;
+                  const sortedEntries = [...officerEntries].sort((a, b) => new Date(b.createdAt || b.updatedAt) - new Date(a.createdAt || a.updatedAt));
+                  const lastEntryDate = sortedEntries.length > 0 ? formatDateTime(sortedEntries[0].createdAt || sortedEntries[0].updatedAt) : "No recent entry";
+                  const officerUser = managerUsers.find(u => normalizePerson(u.name) === normalizePerson(officerName));
+                  const avatarSrc = officerUser?.profileImage ? assetUrl(officerUser.profileImage) : null;
+                  return (
+                    <div key={officerName} className="officer-profile-card redesign" onClick={() => { setSelectedOfficerDetail(officerName); setHistoryEditSource(""); }}>
+                      <div className="officer-avatar">
+                        {avatarSrc ? <img src={avatarSrc} alt={officerName} className="officer-real-photo" /> : <UsersRound size={24} />}
+                      </div>
+                      <div className="officer-profile-info">
+                        <strong>{officerName}</strong>
+                        <span>{officerEntries.length} Entries</span>
+                        <small>Last entry: {lastEntryDate.replace(", ", " · ")}</small>
+                      </div>
+                    </div>
+                  );
+                })}
+                {Array.from(new Set(filteredRecords.map(r => r.placementOfficer).filter(Boolean))).filter(officerName => !historySearch || officerName.toLowerCase().includes(historySearch.toLowerCase())).length === 0 && (
+                  <EmptyState icon={Search} message="No officers match this search" />
+                )}
+              </div>
+            </div>
+          )}
+
+          {importHistoryTab === "officers-entry" && selectedOfficerDetail && (
+            <div className="officer-detail-view redesign">
+              <div className="officer-detail-header text-left">
+                <button className="back-link soft" onClick={() => setSelectedOfficerDetail(null)}><ArrowLeft size={16} /> Back</button>
+                <div className="officer-header-titles">
+                  <h3>{selectedOfficerDetail}</h3>
+                  <span className="eyebrow">Officer Entries</span>
+                  <p>{filteredRecords.filter(r => r.placementOfficer === selectedOfficerDetail).length} Total Entries</p>
+                </div>
+              </div>
+              <div className="officer-entries-table-container">
+                <table className="officer-entries-table fixed-layout" style={{ minWidth: "1400px" }}>
+                  <thead>
+                    <tr>
+                      <th className="text-center">Date of Entry</th>
+                      <th className="text-center">SR</th>
+                      <th className="text-left">Placement Officer</th>
+                      <th className="text-left">Company Category</th>
+                      <th className="text-left">Lead By</th>
+                      <th className="text-left">Company Name</th>
+                      <th className="text-left">Job Profile</th>
+                      <th className="text-left">Roles</th>
+                      <th className="text-center">Package</th>
+                      <th className="text-center">Branch</th>
+                      <th className="text-center">Batch</th>
+                      <th className="text-center">Total Elgible</th>
+                      <th className="text-center">Total Reg</th>
+                      <th className="text-center">No. of Selections</th>
+                      <th className="text-center">Actual Status</th>
+                      <th className="text-left">Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRecords.filter(r => r.placementOfficer === selectedOfficerDetail)
+                      .sort((a, b) => new Date(b.createdAt || b.updatedAt) - new Date(a.createdAt || a.updatedAt))
+                      .filter(r => !historySearch || (r.companyName || "").toLowerCase().includes(historySearch.toLowerCase()) || (r.batch || "").toLowerCase().includes(historySearch.toLowerCase()) || (r.sourceFile || "").toLowerCase().includes(historySearch.toLowerCase()))
+                      .map((record, index) => (
+                        <tr key={record._id}>
+                          <td className="text-center" style={{ fontSize: "12px", color: "#64748b" }}>
+                            {new Date(record.createdAt || record.updatedAt || Date.now()).toLocaleString()}
+                          </td>
+                          <td className="text-center">{index + 1}</td>
+                          <td className="text-left">{record.placementOfficer || "-"}</td>
+                          <td className="text-left">{record.companyCategory || "-"}</td>
+                          <td className="text-left">{record.leadBy || "-"}</td>
+                          <td className="text-left"><strong>{record.companyName || "-"}</strong></td>
+                          <td className="text-left">{record.jobProfile || "-"}</td>
+                          <td className="text-left">{record.roles || "-"}</td>
+                          <td className="text-center">{record.package || "-"}</td>
+                          <td className="text-center">{record.branch || "-"}</td>
+                          <td className="text-center">{record.batch || "-"}</td>
+                          <td className="text-center">{record.totalEligible || "-"}</td>
+                          <td className="text-center">{record.totalReg || "-"}</td>
+                          <td className="text-center">{record.noOfSelections || "-"}</td>
+                          <td className="text-center"><span className={`status-badge subtle ${String(record.actualStatus || "").toLowerCase().replace(/[^a-z0-9]/g, '-')}`}>{record.actualStatus || "-"}</span></td>
+                          <td className="text-left wrap-text">{record.remarks || "-"}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       </section>
     )}
@@ -2406,6 +2575,7 @@ function doPost(e) {
           records={filteredRecords.filter(record => (record.sourceFile || "Uploaded planner file") === historyEditSource)}
           onReload={() => load(year)}
           onClose={() => setHistoryEditSource("")}
+          canEdit={true}
         />
       </section>
     )}
@@ -3127,9 +3297,8 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", collapsed = fal
   }, {}), [requests]);
   
   // Calculate metrics
-  const categoryCount = label => rows.filter(row => String(row.companyCategory || "").toLowerCase().includes(label)).length;
-  const coreCount = categoryCount("core");
-  const salesCount = rows.filter(row => !String(row.companyCategory || "").toLowerCase().includes("core")).length;
+  const coreCount = rows.filter(row => String(row.roles || "").toLowerCase().includes("core")).length;
+  const salesCount = rows.filter(row => String(row.roles || "").toLowerCase().includes("sales")).length;
   const totalCategory = coreCount + salesCount || 1;
   const salesPct = Math.round((salesCount / totalCategory) * 100);
   const corePct = 100 - salesPct;
@@ -3248,7 +3417,7 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", collapsed = fal
       label: "Sales Selections",
       text: "Primary strength in sales domain placements.",
       defaultFields: ["companyName", "jobProfile", "placementOfficer", "leadBy", "batch", "actualStatus", "selections", "packageText", "remarks"],
-      filter: record => !String(record.companyCategory || "").toLowerCase().includes("core"),
+      filter: record => String(record.roles || "").toLowerCase().includes("sales"),
       note: `${salesCount} rows are treated as sales/non-core placement rows.`
     },
     {
@@ -3258,7 +3427,7 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", collapsed = fal
       label: "Core Selections",
       text: "Focused effort on high-potential core opportunities.",
       defaultFields: ["companyName", "jobProfile", "placementOfficer", "leadBy", "batch", "actualStatus", "selections", "packageText", "remarks"],
-      filter: record => String(record.companyCategory || "").toLowerCase().includes("core"),
+      filter: record => String(record.roles || "").toLowerCase().includes("core"),
       note: `${coreCount} rows are marked as core placement opportunities.`
     }
   ], [coreCount, nilSelections, overallAchievement, s.closed, salesCount, targetAllotted, totalSelections, withSelections]);
@@ -3344,17 +3513,11 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", collapsed = fal
     }
   };
   const openEditRequest = (record) => {
-    const field = "companyName";
     setEditRequestDraft({
       record,
-      field,
-      currentValue: String(record[field] ?? ""),
-      requestedValue: "",
+      requestedUpdates: {},
       reason: ""
     });
-  };
-  const changeRequestField = (field) => {
-    setEditRequestDraft(prev => ({ ...prev, field, currentValue: String(prev.record?.[field] ?? ""), requestedValue: "" }));
   };
   const submitEditRequest = async (event) => {
     event.preventDefault();
@@ -3362,9 +3525,7 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", collapsed = fal
     setRequestBusy(true);
     try {
       await onRequest?.(editRequestDraft.record, {
-        field: editRequestDraft.field,
-        currentValue: editRequestDraft.currentValue,
-        requestedValue: editRequestDraft.requestedValue,
+        requestedUpdates: editRequestDraft.requestedUpdates,
         reason: editRequestDraft.reason
       });
       setEditRequestDraft(null);
@@ -3529,19 +3690,30 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", collapsed = fal
               <button type="button" className="icon-button soft" onClick={() => setEditRequestDraft(null)} aria-label="Close request"><X size={18} /></button>
             </header>
             <form onSubmit={submitEditRequest}>
-              <label>Field to change
-                <select value={editRequestDraft.field} onChange={event => changeRequestField(event.target.value)}>
-                  {requestFields.map(field => <option key={field} value={field}>{labelFor(field)}</option>)}
-                </select>
-              </label>
-              <label>Current value
-                <input value={editRequestDraft.currentValue} readOnly />
-              </label>
-              <label>Requested value
-                <input value={editRequestDraft.requestedValue} onChange={event => setEditRequestDraft(prev => ({ ...prev, requestedValue: event.target.value }))} placeholder="Enter the corrected value" required />
-              </label>
-              <label>Reason
-                <textarea value={editRequestDraft.reason} onChange={event => setEditRequestDraft(prev => ({ ...prev, reason: event.target.value }))} placeholder="Explain why this field should be changed" required minLength={5} />
+              <div className="form-grid modern-grid" style={{ marginTop: "16px", marginBottom: "16px", textAlign: "left" }}>
+                {placementSheetColumns.filter(([key]) => key !== "ron" && key !== "actualStatus" && key !== "remarks").map(([key, label, type]) => {
+                  const currentVal = String(editRequestDraft.record[key] ?? "");
+                  const val = editRequestDraft.requestedUpdates[key] !== undefined ? editRequestDraft.requestedUpdates[key] : currentVal;
+                  return (
+                    <label key={key}>{label}
+                      {key === "branch" ? (
+                        <MultiSelectDropdown options={["CSE", "AIML", "AIDS", "ECE", "Robotics & AI", "Blockchain", "Cybersecurity", "BCA", "MCA", "B.Sc Cyber Security", "MBA", "BBA", "B.Com"]} value={val} onChange={newVal => setEditRequestDraft(prev => ({ ...prev, requestedUpdates: { ...prev.requestedUpdates, [key]: newVal } }))} />
+                      ) : ["roles", "companyCategory", "batch"].includes(key) ? (
+                        <select value={val} onChange={e => setEditRequestDraft(prev => ({ ...prev, requestedUpdates: { ...prev.requestedUpdates, [key]: e.target.value } }))}>
+                          <option value="">- Select -</option>
+                          {key === "roles" && <> <option value="Core">Core</option> <option value="Sales">Sales</option> </>}
+                          {key === "companyCategory" && <> <option value="Must Attend">Must Attend</option> <option value="May Attend">May Attend</option> </>}
+                          {key === "batch" && [...Array(10)].map((_, i) => <option key={i} value={2026 + i}>{2026 + i}</option>)}
+                        </select>
+                      ) : (
+                        <input type={type === "date" ? "text" : type} value={val} onChange={e => setEditRequestDraft(prev => ({ ...prev, requestedUpdates: { ...prev.requestedUpdates, [key]: e.target.value } }))} placeholder={currentVal || `Enter ${label}`} />
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+              <label style={{ textAlign: "left" }}>Reason
+                <textarea value={editRequestDraft.reason} onChange={event => setEditRequestDraft(prev => ({ ...prev, reason: event.target.value }))} placeholder="Explain why these changes are needed" required minLength={5} />
               </label>
               <div className="edit-request-actions">
                 <button disabled={requestBusy}>{requestBusy ? "Sending..." : "Send Request"}</button>
@@ -7375,30 +7547,65 @@ function ErrorState({ message }) {
   return <div className="notice error-notice">{message}</div>;
 }
 
+function MultiSelectDropdown({ options, value, onChange, placeholder = "Select..." }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedValues = Array.isArray(value) ? value : String(value || "").split(", ").filter(Boolean);
+
+  const toggleOption = (opt) => {
+    let next;
+    if (selectedValues.includes(opt)) {
+      next = selectedValues.filter(v => v !== opt);
+    } else {
+      next = [...selectedValues, opt];
+    }
+    onChange(next.join(", "));
+  };
+
+  return (
+    <div className="multi-select-dropdown" style={{ position: "relative" }}>
+      <div 
+        className="multi-select-input" 
+        onClick={() => setIsOpen(!isOpen)}
+        style={{ padding: "10px 12px", background: "#ffffff", cursor: "pointer", display: "flex", alignItems: "center" }}
+      >
+        {selectedValues.length > 0 ? selectedValues.join(", ") : <span style={{ color: "#9ca3af", fontWeight: "normal" }}>{placeholder}</span>}
+      </div>
+      {isOpen && (
+        <>
+          <div className="multi-select-backdrop" onClick={() => setIsOpen(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 10 }}></div>
+          <div className="multi-select-options" style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#fff", border: "1px solid #cbd8e6", borderRadius: "6px", maxHeight: "200px", overflowY: "auto", zIndex: 11, boxShadow: "0 4px 6px rgba(0,0,0,0.1)", marginTop: "4px", padding: "4px 0", textAlign: "left" }}>
+            {options.map(opt => (
+              <div 
+                key={opt} 
+                onClick={(e) => { e.stopPropagation(); toggleOption(opt); }}
+                style={{ padding: "6px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "#071426", fontWeight: "500" }}
+              >
+                <input type="checkbox" checked={selectedValues.includes(opt)} readOnly style={{ margin: 0, width: "14px", height: "14px", minHeight: "14px", cursor: "pointer", boxShadow: "none" }} />
+                {opt}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 const placementSheetColumns = [
-  ["ron", "RON", "text"],
+  ["ron", "sr", "text"],
   ["placementOfficer", "Placement Officer", "text"],
-  ["companyCategory", "Company Category", "text"],
+  ["companyCategory", "COMPANY CATEGORY", "text"],
   ["leadBy", "Lead By", "text"],
-  ["dateFloated", "Date of Floated", "date"],
-  ["dateOfDrive", "Date of Drive", "date"],
   ["companyName", "Company Name", "text"],
   ["jobProfile", "Job Profile", "text"],
+  ["roles", "Roles", "text"],
   ["packageText", "Package", "text"],
   ["branch", "Branch", "text"],
-  ["mode", "Mode (On Campus/ Online/Off Campus)", "text"],
   ["batch", "Batch", "text"],
-  ["totalEligible", "Total Eligible", "number"],
-  ["totalRegistered", "Total Reg Count", "number"],
-  ["dateSharedWithHr", "Date Shared With HR", "date"],
-  ["dataShared", "Data Shared Yes / No", "text"],
-  ["round1Date", "Round 1 Date", "date"],
-  ["round2Date", "Round 2 (if Any) Date", "date"],
-  ["shortlistedDate", "Shortlisted Date", "date"],
-  ["finalSelectionDate", "Final Selection Date", "date"],
+  ["totalEligible", "Total Elgible", "number"],
+  ["totalRegistered", "Total Reg", "number"],
   ["selections", "No. of Selections", "number"],
   ["actualStatus", "Actual Status", "text"],
-  ["resultSharedBackend", "Result to be Share With Backend Yes/ No", "text"],
   ["remarks", "Remarks", "text"]
 ];
 
@@ -7407,6 +7614,8 @@ function EditablePlacementSheet({ year, memberName, records, onReload, onClose, 
   const [savingId, setSavingId] = useState("");
   const [message, setMessage] = useState("");
   const [requestDraft, setRequestDraft] = useState(null);
+  const [sheetSearch, setSheetSearch] = useState("");
+  const [isExpanded, setIsExpanded] = useState(false);
   const [requestBusy, setRequestBusy] = useState(false);
   const [requestMessage, setRequestMessage] = useState("");
   const [showAddRow, setShowAddRow] = useState(false);
@@ -7450,44 +7659,6 @@ function EditablePlacementSheet({ year, memberName, records, onReload, onClose, 
   const fieldValue = (record, key, type) => drafts[record._id]?.[key] ?? (type === "date" ? dateValue(record[key], record, key) : (record[key] ?? ""));
   const updateDraft = (record, key, value) => {
     setDrafts(prev => ({ ...prev, [record._id]: { ...(prev[record._id] || {}), [key]: value } }));
-  };
-  const openRequest = (record) => {
-    setRequestDraft({
-      record,
-      field: "actualStatus",
-      requestedValue: String(record.actualStatus ?? ""),
-      reason: ""
-    });
-    setRequestMessage("");
-  };
-  const submitRequest = async () => {
-    if (!requestDraft?.record) return;
-    if (!requestDraft.reason.trim()) {
-      setRequestMessage("Please add a reason before sending the request.");
-      return;
-    }
-    setRequestBusy(true);
-    setRequestMessage("");
-    try {
-      await api(`/drives/planner/records/${requestDraft.record._id}/edit-request`, {
-        method: "POST",
-        body: JSON.stringify({
-          reason: requestDraft.reason.trim(),
-          field: requestDraft.field,
-          currentValue: String(requestDraft.record[requestDraft.field] ?? ""),
-          requestedValue: String(requestDraft.requestedValue ?? "")
-        })
-      });
-      setRequestMessage("Request sent to Head successfully.");
-      setTimeout(() => {
-        setRequestDraft(null);
-        setRequestMessage("");
-      }, 1500);
-    } catch (error) {
-      setRequestMessage(error.message);
-    } finally {
-      setRequestBusy(false);
-    }
   };
   const submitNewRecord = async (event) => {
     event.preventDefault();
@@ -7538,41 +7709,132 @@ function EditablePlacementSheet({ year, memberName, records, onReload, onClose, 
     }
   };
 
+  const filteredRecords = records.filter(record => 
+    !sheetSearch || 
+    (record.companyName || "").toLowerCase().includes(sheetSearch.toLowerCase()) ||
+    (record.roles || "").toLowerCase().includes(sheetSearch.toLowerCase()) ||
+    (record.placementOfficer || "").toLowerCase().includes(sheetSearch.toLowerCase()) ||
+    (record.actualStatus || "").toLowerCase().includes(sheetSearch.toLowerCase())
+  );
+
+  const renderTableRows = (recordList) => (
+    <>
+      {recordList.map(record => (
+        <tr key={record._id}>
+          {placementSheetColumns.map(([key, label, type]) => (
+            <td key={`${record._id}-${key}`} data-label={label}>
+              {canEdit || ["actualStatus", "remarks"].includes(key) ? (
+                key === "branch" ? (
+                  <MultiSelectDropdown
+                    options={["CSE", "AIML", "AIDS", "ECE", "Robotics & AI", "Blockchain", "Cybersecurity", "BCA", "MCA", "B.Sc Cyber Security", "MBA", "BBA", "B.Com"]}
+                    value={fieldValue(record, key, type)}
+                    onChange={val => updateDraft(record, key, val)}
+                  />
+                ) : ["actualStatus", "roles", "companyCategory", "batch"].includes(key) ? (
+                  <select
+                    value={fieldValue(record, key, type) || ""}
+                    onChange={event => updateDraft(record, key, event.target.value)}
+                  >
+                    <option value="">- Select -</option>
+                    {key === "actualStatus" && <>
+                      <option value="Closed">Closed</option>
+                      <option value="In progress">In progress</option>
+                    </>}
+                    {key === "roles" && <>
+                      <option value="Core">Core</option>
+                      <option value="Sales">Sales</option>
+                    </>}
+                    {key === "companyCategory" && <>
+                      <option value="Must Attend">Must Attend</option>
+                      <option value="May Attend">May Attend</option>
+                    </>}
+                    {key === "batch" && <>
+                      {[...Array(10)].map((_, i) => <option key={i} value={2026 + i}>{2026 + i}</option>)}
+                    </>}
+                  </select>
+                ) : (
+                  <input
+                    type={type === "date" ? "text" : type}
+                    value={fieldValue(record, key, type)}
+                    title={String(fieldValue(record, key, type) || "")}
+                    placeholder={type === "date" ? "dd-mm-yyyy" : ""}
+                    onChange={event => updateDraft(record, key, event.target.value)}
+                    onKeyDown={event => saveRecordOnEnter(event, record)}
+                  />
+                )
+              ) : (
+                <span className="readonly-sheet-cell">{fieldValue(record, key, type) || "-"}</span>
+              )}
+            </td>
+          ))}
+          <td className="placement-sheet-actions" style={{ display: 'flex', gap: '6px', flexDirection: 'column' }}>
+            {(canEdit || drafts[record._id] !== undefined) && (
+              <button onClick={() => saveRecord(record)} disabled={savingId === record._id || !drafts[record._id]}>
+                <Save size={15} /> {savingId === record._id ? "Saving" : "Save"}
+              </button>
+            )}
+          </td>
+        </tr>
+      ))}
+      {!recordList.length && (
+        <tr>
+          <td colSpan={placementSheetColumns.length + 1}>
+            No planner rows found for {memberName}. Check that the sheet's Placement Officer or Lead By name exactly matches this manager.
+          </td>
+        </tr>
+      )}
+    </>
+  );
+
   return (
     <div className="editable-planner placement-sheet-editor">
-      <div className="editable-planner-header">
-        <div>
-          <h3>Placement Sheet for {year}</h3>
-          <p>{records.length} rows linked to {memberName} by the Placement Officer or Lead By column.</p>
-        </div>
-        <div className="editable-planner-header-actions">
+      <div className="editable-planner-header" style={{ position: "relative", padding: "20px", background: "#0f172a", borderTopLeftRadius: "10px", borderTopRightRadius: "10px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "16px" }}>
+        <h3 style={{ margin: "0", color: "#ffffff", fontSize: "22px" }}>Placement Report Sheet</h3>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0, flexWrap: "wrap" }}>
           {message && <span className="planner-msg">{message}</span>}
-          {!canEdit && <button type="button" onClick={() => { setShowAddRow(value => !value); setAddMessage(""); }}><FileSpreadsheet size={16} /> {showAddRow ? "Close Add Form" : "Add New Row"}</button>}
-          {onClose && <button type="button" className="soft editable-planner-close" onClick={onClose}><X size={16} /> Close Sheet</button>}
+          <div className="sheet-search-wrap" style={{ position: "relative" }}>
+            <Search size={15} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#64748b" }} />
+            <input 
+              value={sheetSearch} 
+              onChange={e => setSheetSearch(e.target.value)} 
+              placeholder="Search records..." 
+              style={{ padding: "8px 12px 8px 32px", borderRadius: "6px", border: "none", background: "rgba(255,255,255,0.1)", color: "#fff", outline: "none", fontSize: "14px", width: "240px", transition: "background 0.2s" }}
+              onFocus={e => e.target.style.background = "rgba(255,255,255,0.15)"}
+              onBlur={e => e.target.style.background = "rgba(255,255,255,0.1)"}
+            />
+          </div>
+          {!canEdit && <button type="button" className="header-action-btn" onClick={() => { setShowAddRow(value => !value); setAddMessage(""); }} style={{ background: "rgba(255,255,255,0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", borderRadius: "6px", padding: "6px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}>{showAddRow ? "Close Add Form" : <><FileSpreadsheet size={16} /> Add New Row</>}</button>}
+          {onClose && <button type="button" className="header-action-btn editable-planner-close" onClick={onClose} style={{ background: "rgba(255,255,255,0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", borderRadius: "6px", padding: "6px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}><X size={16} /> Close Sheet</button>}
         </div>
       </div>
-      {!canEdit && <div className="notice" style={{ marginBottom: "12px" }}>This sheet is read-only for placement officers. Use Request Change to send corrections to Head approval.</div>}
-      {!canEdit && showAddRow && <form className="sheet-request-panel placement-add-row-panel" onSubmit={submitNewRecord}>
-        <div><strong>Add a placement row</strong><p>Entries are added only to your own sheet. Once saved, they cannot be edited directly.</p></div>
-        <div className="form-grid">
-          <label>Academic year<input value={newRecord.academicYear} onChange={e => setNewRecord(prev => ({ ...prev, academicYear: e.target.value }))} placeholder="e.g. 2026-2027" required /></label>
-          <label>Batch<input value={newRecord.batch} onChange={e => setNewRecord(prev => ({ ...prev, batch: e.target.value }))} placeholder="e.g. 2027" /></label>
-          <label>Company name<input value={newRecord.companyName} onChange={e => setNewRecord(prev => ({ ...prev, companyName: e.target.value }))} required /></label>
-          <label>Job profile<input value={newRecord.jobProfile} onChange={e => setNewRecord(prev => ({ ...prev, jobProfile: e.target.value }))} /></label>
-          <label>Company category<input value={newRecord.companyCategory} onChange={e => setNewRecord(prev => ({ ...prev, companyCategory: e.target.value }))} /></label>
-          <label>Package<input value={newRecord.packageText} onChange={e => setNewRecord(prev => ({ ...prev, packageText: e.target.value }))} placeholder="e.g. 6 LPA" /></label>
-          <label>Date floated<input type="date" value={newRecord.dateFloated} onChange={e => setNewRecord(prev => ({ ...prev, dateFloated: e.target.value }))} /></label>
-          <label>Date of drive<input type="date" value={newRecord.dateOfDrive} onChange={e => setNewRecord(prev => ({ ...prev, dateOfDrive: e.target.value }))} /></label>
-          <label>Branch<input value={newRecord.branch} onChange={e => setNewRecord(prev => ({ ...prev, branch: e.target.value }))} /></label>
-          <label>Mode<input value={newRecord.mode} onChange={e => setNewRecord(prev => ({ ...prev, mode: e.target.value }))} placeholder="On Campus / Online" /></label>
-          <label>Total eligible<input type="number" min="0" value={newRecord.totalEligible} onChange={e => setNewRecord(prev => ({ ...prev, totalEligible: e.target.value }))} /></label>
-          <label>Total registered<input type="number" min="0" value={newRecord.totalRegistered} onChange={e => setNewRecord(prev => ({ ...prev, totalRegistered: e.target.value }))} /></label>
-          <label>Selections<input type="number" min="0" value={newRecord.selections} onChange={e => setNewRecord(prev => ({ ...prev, selections: e.target.value }))} /></label>
-          <label>Current status<input value={newRecord.actualStatus} onChange={e => setNewRecord(prev => ({ ...prev, actualStatus: e.target.value }))} placeholder="Open / Closed / Selected" /></label>
+      {!canEdit && showAddRow && <form className="sheet-request-panel placement-add-row-panel redesign" onSubmit={submitNewRecord} style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "28px", margin: "16px", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.05)" }}>
+        <div style={{ marginBottom: "24px", textAlign: "left" }}>
+          <strong style={{ fontSize: "18px", color: "#0f172a", display: "block", marginBottom: "6px" }}>Add a placement row</strong>
+          <p style={{ color: "#64748b", margin: 0, fontSize: "14px", fontWeight: "normal" }}>Entries are added only to your own sheet. Once saved, they cannot be edited directly.</p>
+        </div>
+        <hr style={{ borderTop: "1px solid #e2e8f0", margin: "0 0 28px 0" }} />
+        <div className="form-grid modern-grid">
+          <label>Sr<input value={newRecord.ron} onChange={e => setNewRecord(prev => ({ ...prev, ron: e.target.value }))} /></label>
+          <label>Placement Officer<input value={newRecord.placementOfficer} onChange={e => setNewRecord(prev => ({ ...prev, placementOfficer: e.target.value }))} /></label>
+          <label>Company Category<select value={newRecord.companyCategory} onChange={e => setNewRecord(prev => ({ ...prev, companyCategory: e.target.value }))}><option value="">- Select -</option><option value="Must Attend">Must Attend</option><option value="May Attend">May Attend</option></select></label>
+          <label>Lead By<input value={newRecord.leadBy} onChange={e => setNewRecord(prev => ({ ...prev, leadBy: e.target.value }))} /></label>
+          <label>Company Name<input value={newRecord.companyName} onChange={e => setNewRecord(prev => ({ ...prev, companyName: e.target.value }))} required /></label>
+          <label>Job Profile<input value={newRecord.jobProfile} onChange={e => setNewRecord(prev => ({ ...prev, jobProfile: e.target.value }))} /></label>
+          <label>Roles<select value={newRecord.roles} onChange={e => setNewRecord(prev => ({ ...prev, roles: e.target.value }))}><option value="">- Select -</option><option value="Core">Core</option><option value="Sales">Sales</option></select></label>
+          <label>Package<input value={newRecord.packageText} onChange={e => setNewRecord(prev => ({ ...prev, packageText: e.target.value }))} /></label>
+          <label>Branch<MultiSelectDropdown options={["CSE", "AIML", "AIDS", "ECE", "Robotics & AI", "Blockchain", "Cybersecurity", "BCA", "MCA", "B.Sc Cyber Security", "MBA", "BBA", "B.Com"]} value={newRecord.branch} onChange={val => setNewRecord(prev => ({ ...prev, branch: val }))} /></label>
+          <label>Batch<select value={newRecord.batch} onChange={e => setNewRecord(prev => ({ ...prev, batch: e.target.value }))}><option value="">- Select -</option>{[...Array(10)].map((_, i) => <option key={i} value={2026 + i}>{2026 + i}</option>)}</select></label>
+          <label>Total Eligible<input type="number" min="0" value={newRecord.totalEligible} onChange={e => setNewRecord(prev => ({ ...prev, totalEligible: e.target.value }))} /></label>
+          <label>Total Reg<input type="number" min="0" value={newRecord.totalRegistered} onChange={e => setNewRecord(prev => ({ ...prev, totalRegistered: e.target.value }))} /></label>
+          <label>No. of Selections<input type="number" min="0" value={newRecord.selections} onChange={e => setNewRecord(prev => ({ ...prev, selections: e.target.value }))} /></label>
+          <label>Actual Status<select value={newRecord.actualStatus} onChange={e => setNewRecord(prev => ({ ...prev, actualStatus: e.target.value }))}><option value="">- Select -</option><option value="Closed">Closed</option><option value="In progress">In progress</option></select></label>
           <label className="wide">Remarks<textarea rows="2" value={newRecord.remarks} onChange={e => setNewRecord(prev => ({ ...prev, remarks: e.target.value }))} /></label>
         </div>
-        {addMessage && <div className="notice">{addMessage}</div>}
-        <div className="sheet-request-actions"><button type="submit" disabled={adding}>{adding ? "Adding..." : "Add Locked Row"}</button></div>
+        {addMessage && <div className="notice" style={{ marginTop: "16px" }}>{addMessage}</div>}
+        <div className="sheet-request-actions" style={{ justifyContent: "flex-end", marginTop: "28px" }}>
+          <button type="button" className="soft" onClick={() => setShowAddRow(false)}>Cancel</button>
+          <button type="submit" disabled={adding}>{adding ? "Adding..." : "Add Row"}</button>
+        </div>
       </form>}
       <div className="planner-grid-wrap placement-sheet-wrap">
         <table>
@@ -7583,71 +7845,55 @@ function EditablePlacementSheet({ year, memberName, records, onReload, onClose, 
             </tr>
           </thead>
           <tbody>
-            {records.map(record => (
-              <tr key={record._id}>
-                {placementSheetColumns.map(([key, label, type]) => (
-                  <td key={`${record._id}-${key}`} data-label={label}>
-                    {canEdit ? (
-                      <input
-                        type={type === "date" ? "text" : type}
-                        value={fieldValue(record, key, type)}
-                        title={String(fieldValue(record, key, type) || "")}
-                        placeholder={type === "date" ? "dd-mm-yyyy" : ""}
-                        onChange={event => updateDraft(record, key, event.target.value)}
-                        onKeyDown={event => saveRecordOnEnter(event, record)}
-                      />
-                    ) : (
-                      <span className="readonly-sheet-cell">{fieldValue(record, key, type) || "-"}</span>
-                    )}
-                  </td>
-                ))}
-                <td className="placement-sheet-actions">
-                  {canEdit ? (
-                    <button onClick={() => saveRecord(record)} disabled={savingId === record._id || !drafts[record._id]}>
-                      <Save size={15} /> {savingId === record._id ? "Saving" : "Save"}
-                    </button>
-                  ) : (
-                    <button type="button" className="soft" onClick={() => openRequest(record)}>
-                      <FileSearch size={15} /> Request Change
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-            {!records.length && (
-              <tr>
-                <td colSpan={placementSheetColumns.length + 1}>
-                  No planner rows found for {memberName}. Check that the sheet's Placement Officer or Lead By name exactly matches this manager.
-                </td>
-              </tr>
-            )}
+            {renderTableRows(filteredRecords.slice(0, 3))}
           </tbody>
         </table>
-      </div>
-      {!canEdit && requestDraft && (
-        <div className="sheet-request-panel placement-change-request-panel">
-          <div>
-            <strong>Request change for {requestDraft.record.companyName || "this row"}</strong>
-            <p>Placement officers can’t edit directly. Submit a correction request to Head approval.</p>
+        {filteredRecords.length > 3 && (
+          <div style={{ textAlign: "center", padding: "16px", background: "#f8fafc", borderTop: "1px solid #e2e8f0" }}>
+            <button type="button" onClick={() => setIsExpanded(true)} style={{ background: "#0f172a", color: "#fff", padding: "8px 24px", borderRadius: "6px", border: "none", cursor: "pointer", fontWeight: "600", letterSpacing: "0.5px", transition: "background 0.2s" }} onMouseEnter={e => e.target.style.background = "#1e293b"} onMouseLeave={e => e.target.style.background = "#0f172a"}>
+              View More
+            </button>
           </div>
-          <label>Field
-            <select value={requestDraft.field} onChange={(event) => setRequestDraft(prev => ({ ...prev, field: event.target.value }))}>
-              {placementSheetColumns.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-            </select>
-          </label>
-          <label>Requested value
-            <input value={requestDraft.requestedValue} onChange={(event) => setRequestDraft(prev => ({ ...prev, requestedValue: event.target.value }))} />
-          </label>
-          <label>Reason
-            <textarea rows="3" value={requestDraft.reason} onChange={(event) => setRequestDraft(prev => ({ ...prev, reason: event.target.value }))} />
-          </label>
-          {requestMessage && <div className="notice">{requestMessage}</div>}
-          <div className="sheet-request-actions">
-            <button type="button" onClick={submitRequest} disabled={requestBusy}>{requestBusy ? "Sending..." : "Send Request"}</button>
-            <button type="button" className="soft" onClick={() => setRequestDraft(null)}>Cancel</button>
+        )}
+      </div>
+
+      {isExpanded && (
+        <div className="modal-overlay" style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div className="modal-content placement-sheet-editor" style={{ background: "#fff", borderRadius: "12px", width: "95vw", maxWidth: "1600px", maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)" }}>
+            <div className="editable-planner-header" style={{ position: "relative", padding: "20px", background: "#881337", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "16px" }}>
+              <h3 style={{ margin: "0", color: "#ffffff", fontSize: "22px" }}>Placement Report Sheet - All Records</h3>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
+                <div className="sheet-search-wrap" style={{ position: "relative" }}>
+                  <Search size={15} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#64748b" }} />
+                  <input 
+                    value={sheetSearch} 
+                    onChange={e => setSheetSearch(e.target.value)} 
+                    placeholder="Search records..." 
+                    style={{ padding: "8px 12px 8px 32px", borderRadius: "6px", border: "none", background: "rgba(255,255,255,0.1)", color: "#fff", outline: "none", fontSize: "14px", width: "240px", transition: "background 0.2s" }}
+                    onFocus={e => e.target.style.background = "rgba(255,255,255,0.15)"}
+                    onBlur={e => e.target.style.background = "rgba(255,255,255,0.1)"}
+                  />
+                </div>
+                <button type="button" onClick={() => setIsExpanded(false)} style={{ background: "rgba(255,255,255,0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", borderRadius: "6px", padding: "6px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}><X size={16} /> Close</button>
+              </div>
+            </div>
+            <div className="planner-grid-wrap placement-sheet-wrap" style={{ overflow: "auto", flex: 1, padding: "0", borderTop: "none" }}>
+              <table>
+                <thead>
+                  <tr>
+                    {placementSheetColumns.map(([, label]) => <th key={label}>{label}</th>)}
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {renderTableRows(filteredRecords)}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
+
     </div>
   );
 }

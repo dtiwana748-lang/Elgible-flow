@@ -10,6 +10,7 @@ const placementRecordSchema = new mongoose.Schema({
   dateOfDrive: Date,
   companyName: { type: String, required: true, trim: true, index: true },
   jobProfile: String,
+  roles: String,
   packageLpa: Number,
   packageText: String,
   branch: String,

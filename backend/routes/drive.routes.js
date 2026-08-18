@@ -33,26 +33,10 @@ function clearPlannerReportCache() {
 }
 
 const plannerColumnLayouts = {
-  "2026": [
-    "ron", "placementOfficer", "companyCategory", "leadBy", "companyName", "jobProfile", "packageText", "branch", "mode",
-    "dateFloated", "dateOfDrive", "batch", "totalEligible", "totalRegistered", "dataShared", "round1Date", "round2Date",
-    "shortlistedDate", "finalSelectionDate", "actualStatus", "resultSharedBackend", "remarks"
-  ],
-  "2027": [
-    "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "companyName", "jobProfile", "packageText", "branch",
-    "mode", "batch", "totalEligible", "totalRegistered", "dateSharedWithHr", "dataShared", "round1Date", "round2Date",
-    "shortlistedDate", "selections", "actualStatus", "resultSharedBackend", "remarks"
-  ],
-  "2028": [
-    "ron", "placementOfficer", "companyCategory", "leadBy", "companyName", "jobProfile", "packageText", "branch", "mode",
-    "dateFloated", "dateOfDrive", "batch", "totalEligible", "totalRegistered", "dataShared", "round1Date", "round2Date",
-    "shortlistedDate", "finalSelectionDate", "actualStatus", "resultSharedBackend", "remarks"
-  ],
-  "2029": [
-    "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "companyName", "jobProfile", "packageText", "branch",
-    "mode", "dateOfDrive", "batch", "totalEligible", "totalRegistered", "dataShared", "round1Date", "round2Date",
-    "shortlistedDate", "finalSelectionDate", "actualStatus", "resultSharedBackend", "remarks"
-  ]
+  "2023": ["ron", "placementOfficer", "companyCategory", "leadBy", "companyName", "jobProfile", "roles", "packageText", "branch", "batch", "totalEligible", "totalRegistered", "selections", "actualStatus", "remarks"],
+  "2024": ["ron", "placementOfficer", "companyCategory", "leadBy", "companyName", "jobProfile", "roles", "packageText", "branch", "batch", "totalEligible", "totalRegistered", "selections", "actualStatus", "remarks"],
+  "2025": ["ron", "placementOfficer", "companyCategory", "leadBy", "companyName", "jobProfile", "roles", "packageText", "branch", "batch", "totalEligible", "totalRegistered", "selections", "actualStatus", "remarks"],
+  "2026": ["ron", "placementOfficer", "companyCategory", "leadBy", "companyName", "jobProfile", "roles", "packageText", "branch", "batch", "totalEligible", "totalRegistered", "selections", "actualStatus", "remarks"]
 };
 
 const plannerBatchYear = value => {
@@ -167,7 +151,8 @@ const plannerFieldAliases = {
   dateFloated: ["Date of Floated", "Floated Date", "Date Floated", "Opening Date"],
   dateOfDrive: ["Date of Drive", "Drive Date", "Campus Drive Date", "Interview Date"],
   companyName: ["Company Name", "Company", "Employer", "Organisation", "Organization"],
-  jobProfile: ["Job Profile", "Job Role", "Role", "Profile", "Designation"],
+  jobProfile: ["Job Profile", "Job Role", "Profile", "Designation"],
+  roles: ["Roles", "Placement Role", "Role Type", "Role Category"],
   packageText: ["Package", "CTC", "Package CTC", "Salary", "Stipend"],
   branch: ["Branch", "Branches", "Department", "Stream"],
   mode: ["Mode (On Campus/ Online/Off Campus)", "Mode", "Drive Mode", "Campus Mode"],
@@ -238,7 +223,7 @@ function buildPlannerRecords(rows, { academicYear = "", sourceFile = "planner-sh
       companyCategory: String(plannerValue(row, plannerFieldAliases.companyCategory, "companyCategory", batchHint)),
       leadBy, dateFloated, dateOfDrive,
       companyName: String(plannerValue(row, plannerFieldAliases.companyName, "companyName", batchHint)).trim(),
-      jobProfile: String(plannerValue(row, plannerFieldAliases.jobProfile, "jobProfile", batchHint)), packageText, packageLpa: plannerPackageLpa(packageText),
+      jobProfile: String(plannerValue(row, plannerFieldAliases.jobProfile, "jobProfile", batchHint)), roles: String(plannerValue(row, plannerFieldAliases.roles, "roles", batchHint)), packageText, packageLpa: plannerPackageLpa(packageText),
       branch: String(plannerValue(row, plannerFieldAliases.branch, "branch", batchHint)), mode: String(plannerValue(row, plannerFieldAliases.mode, "mode", batchHint)),
       batch: forcedBatch || sheetBatch, totalEligible: plannerNumber(plannerValue(row, plannerFieldAliases.totalEligible, "totalEligible", batchHint)),
       totalRegistered: plannerNumber(plannerValue(row, plannerFieldAliases.totalRegistered, "totalRegistered", batchHint)),
@@ -426,7 +411,12 @@ router.get("/planner/report", requireAuth, async (req, res) => {
       });
     };
     const requestFilter = req.user.role === "HOD" ? {} : { requester: req.user._id };
-    const requests = await PlacementEditRequest.find(requestFilter).populate("record", "companyName jobProfile academicYear placementOfficer leadBy batch").populate("requester", "name designation").sort({ createdAt: -1 }).lean();
+    const requests = await PlacementEditRequest.find(requestFilter)
+      .populate("record", "companyName jobProfile academicYear placementOfficer leadBy batch")
+      .populate("requester", "name designation")
+      .populate("reviewedBy", "name designation")
+      .sort({ createdAt: -1 })
+      .lean();
     const data = { academicYear, years: sortedYears, summary: summarize(records), officerReports: group("placementOfficer"), outreachReports: group("leadBy"), records, comparisonRecords, requests };
     plannerReportCache.set(cacheKey, { createdAt: Date.now(), data });
     if (process.env.NODE_ENV !== "production") console.info(`[PERF] /api/drives/planner/report ${Math.round(performance.now() - startedAt)}ms`);
@@ -490,27 +480,25 @@ router.post("/planner/targets", requireAuth, requireRole("HOD"), async (req, res
 router.post("/planner/records/:id/edit-request", requireAuth, async (req, res) => {
   if (req.user.role === "HOD") return res.status(400).json({ message: "Head can manage records directly" });
   const reason = String(req.body.reason || "").trim();
-  const field = String(req.body.field || "").trim();
-  const requestedValue = String(req.body.requestedValue || "").trim();
-  const currentValue = String(req.body.currentValue || "").trim();
+  const requestedUpdates = req.body.requestedUpdates || {};
+  if (Object.keys(requestedUpdates).length === 0) return res.status(400).json({ message: "No updates provided" });
   if (reason.length < 5) return res.status(400).json({ message: "Describe the required correction" });
-  if (!field) return res.status(400).json({ message: "Select the field that needs correction" });
   const record = await PlacementRecord.findById(req.params.id);
   if (!record) return res.status(404).json({ message: "Placement record not found" });
   const normalizeOwner = value => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   const requester = normalizeOwner(req.user.name);
   const belongsToRequester = [record.placementOfficer, record.leadBy].some(value => normalizeOwner(value) === requester);
   if (!belongsToRequester) return res.status(403).json({ message: "You can request changes only for rows in your own placement sheet" });
-  const request = await PlacementEditRequest.create({ record: record._id, requester: req.user._id, field, currentValue, requestedValue, reason });
+  const request = await PlacementEditRequest.create({ record: record._id, requester: req.user._id, requestedUpdates, reason });
   clearPlannerReportCache();
-  await writeAudit({ actor: req.user._id, action: "PLACEMENT_RECORD_EDIT_REQUESTED", entity: "PlacementRecord", entityId: record._id, reason, metadata: { field, requestedValue } });
+  await writeAudit({ actor: req.user._id, action: "PLACEMENT_RECORD_EDIT_REQUESTED", entity: "PlacementRecord", entityId: record._id, reason, metadata: { requestedUpdates } });
   res.status(201).json(request);
 });
 
 router.post("/planner/records", requireAuth, async (req, res) => {
   try {
     const editableFields = [
-      "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "dateOfDrive", "companyName", "jobProfile",
+      "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "dateOfDrive", "companyName", "jobProfile", "roles",
       "packageText", "branch", "mode", "batch", "totalEligible", "totalRegistered", "dateSharedWithHr",
       "dataShared", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate", "selections", "actualStatus",
       "resultSharedBackend", "remarks", "academicYear"
@@ -544,9 +532,10 @@ router.post("/planner/records", requireAuth, async (req, res) => {
   }
 });
 
-router.patch("/planner/records/:id", requireAuth, requireRole("HOD"), async (req, res) => {
+router.patch("/planner/records/:id", requireAuth, async (req, res) => {
+  const isHOD = req.user && req.user.role === "HOD";
   const editableFields = [
-    "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "dateOfDrive", "companyName", "jobProfile",
+    "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "dateOfDrive", "companyName", "jobProfile", "roles",
     "packageText", "branch", "mode", "batch", "totalEligible", "totalRegistered", "dateSharedWithHr",
     "dataShared", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate", "selections", "actualStatus",
     "resultSharedBackend", "remarks"
@@ -556,10 +545,14 @@ router.patch("/planner/records/:id", requireAuth, requireRole("HOD"), async (req
   const updates = {};
   editableFields.forEach((field) => {
     if (!(field in req.body)) return;
+    if (!isHOD && field !== "actualStatus" && field !== "remarks") return;
     if (numericFields.has(field)) updates[field] = plannerNumber(req.body[field]);
     else if (dateFields.has(field)) updates[field] = plannerDate(req.body[field]);
     else updates[field] = String(req.body[field] ?? "");
   });
+  if (Object.keys(updates).length === 0) {
+    return res.status(403).json({ message: "You only have permission to edit Actual Status and Remarks." });
+  }
   if ("packageText" in updates) updates.packageLpa = plannerPackageLpa(updates.packageText);
   const currentRecord = await PlacementRecord.findById(req.params.id);
   if (!currentRecord) return res.status(404).json({ message: "Placement record not found" });
@@ -583,25 +576,28 @@ router.post("/planner/edit-requests/:id/decision", requireAuth, requireRole("HOD
   if (!["APPROVED", "REJECTED"].includes(status)) return res.status(400).json({ message: "Valid decision is required" });
   const request = await PlacementEditRequest.findById(req.params.id);
   if (!request) return res.status(404).json({ message: "Request not found" });
-  if (status === "APPROVED" && request.field) {
+  if (status === "APPROVED" && request.requestedUpdates && Object.keys(request.requestedUpdates).length > 0) {
     const numericFields = new Set(["totalEligible", "totalRegistered", "selections"]);
     const dateFields = new Set(["dateFloated", "dateOfDrive", "dateSharedWithHr", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate"]);
     const editableFields = new Set([
-      "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "dateOfDrive", "companyName", "jobProfile",
+      "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "dateOfDrive", "companyName", "jobProfile", "roles",
       "packageText", "branch", "mode", "batch", "totalEligible", "totalRegistered", "dateSharedWithHr",
       "dataShared", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate", "selections", "actualStatus",
       "resultSharedBackend", "remarks"
     ]);
-    if (!editableFields.has(request.field)) return res.status(400).json({ message: "This field cannot be updated from an edit request" });
-    const value = numericFields.has(request.field)
-      ? plannerNumber(request.requestedValue)
-      : dateFields.has(request.field)
-        ? plannerDate(request.requestedValue)
-        : String(request.requestedValue ?? "");
-    const updates = { [request.field]: value };
-    if (request.field === "packageText") updates.packageLpa = plannerPackageLpa(value);
+    const updates = {};
+    for (const [field, requestedValue] of Object.entries(request.requestedUpdates)) {
+      if (!editableFields.has(field)) continue;
+      const value = numericFields.has(field)
+        ? plannerNumber(requestedValue)
+        : dateFields.has(field)
+          ? plannerDate(requestedValue)
+          : String(requestedValue ?? "");
+      updates[field] = value;
+      if (field === "packageText") updates.packageLpa = plannerPackageLpa(value);
+    }
     const currentRecord = await PlacementRecord.findById(request.record);
-    if (currentRecord) {
+    if (currentRecord && Object.keys(updates).length > 0) {
       const writeBack = await triggerPlannerSheetUpdate(currentRecord, updates).catch(error => ({ ok: false, message: error.message }));
       if (currentRecord.plannerAppsScriptUrl && writeBack?.ok === false && !writeBack?.skipped) {
         return res.json({
@@ -610,9 +606,9 @@ router.post("/planner/edit-requests/:id/decision", requireAuth, requireRole("HOD
           writeBack
         });
       }
+      await PlacementRecord.findByIdAndUpdate(request.record, updates, { runValidators: true });
+      clearPlannerReportCache();
     }
-    await PlacementRecord.findByIdAndUpdate(request.record, updates, { runValidators: true });
-    clearPlannerReportCache();
   }
   request.status = status;
   request.remarks = String(req.body.remarks || "");
@@ -620,7 +616,7 @@ router.post("/planner/edit-requests/:id/decision", requireAuth, requireRole("HOD
   request.reviewedAt = new Date();
   await request.save();
   clearPlannerReportCache();
-  await writeAudit({ actor: req.user._id, action: "PLACEMENT_EDIT_REQUEST_DECIDED", entity: "PlacementEditRequest", entityId: request._id, metadata: { status, record: request.record, field: request.field } });
+  await writeAudit({ actor: req.user._id, action: "PLACEMENT_EDIT_REQUEST_DECIDED", entity: "PlacementEditRequest", entityId: request._id, metadata: { status, record: request.record, requestedUpdates: request.requestedUpdates } });
   res.json(request);
 });
 
