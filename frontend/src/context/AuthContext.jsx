@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AuthError, api, clearAuthToken, getAuthToken, setAuthToken } from "../api.js";
 
 const AuthContext = createContext(null);
@@ -7,6 +7,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(Boolean(getAuthToken()));
   const [authMessage, setAuthMessage] = useState("");
+  const lastSessionCheckRef = useRef(0);
 
   useEffect(() => {
     localStorage.removeItem("eligibleFlowToken");
@@ -55,16 +56,15 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (!user) return;
 
-    let checking = false;
     async function verifySession() {
-      if (checking || !getAuthToken()) return;
-      checking = true;
+      // Keep a long-lived session fresh when the user returns, without polling
+      // /auth/me every minute or rechecking after ordinary component renders.
+      if (!getAuthToken() || Date.now() - lastSessionCheckRef.current < 5 * 60 * 1000) return;
+      lastSessionCheckRef.current = Date.now();
       try {
         setUser(await api("/auth/me"));
       } catch {
         // The API wrapper handles expired or replaced sessions globally.
-      } finally {
-        checking = false;
       }
     }
 
@@ -74,12 +74,10 @@ export function AuthProvider({ children }) {
 
     window.addEventListener("focus", verifySession);
     document.addEventListener("visibilitychange", verifyWhenVisible);
-    const interval = window.setInterval(verifySession, 60 * 1000);
 
     return () => {
       window.removeEventListener("focus", verifySession);
       document.removeEventListener("visibilitychange", verifyWhenVisible);
-      window.clearInterval(interval);
     };
   }, [user]);
 

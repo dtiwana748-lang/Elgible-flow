@@ -3,6 +3,7 @@ import { User } from "../models/User.js";
 import { signToken } from "../utils/tokens.js";
 
 const SESSION_IDLE_MS = 12 * 60 * 60 * 1000;
+const SESSION_TOUCH_MS = 5 * 60 * 1000;
 
 export async function requireAuth(req, res, next) {
   try {
@@ -22,9 +23,14 @@ export async function requireAuth(req, res, next) {
       return res.status(401).json({ message: "Session expired after 12 hours of inactivity" });
     }
 
-    user.lastSeenAt = new Date();
-    user.sessionExpiresAt = new Date(Date.now() + SESSION_IDLE_MS);
-    await user.save();
+    // Avoid a MongoDB write on every API request. The session is still extended
+    // regularly, but dashboard reads no longer wait behind unnecessary writes.
+    const shouldTouchSession = !user.lastSeenAt || Date.now() - user.lastSeenAt.getTime() >= SESSION_TOUCH_MS;
+    if (shouldTouchSession) {
+      user.lastSeenAt = new Date();
+      user.sessionExpiresAt = new Date(Date.now() + SESSION_IDLE_MS);
+      await user.save();
+    }
     res.setHeader("X-Auth-Token", signToken(user, payload.sid));
 
     req.user = user;

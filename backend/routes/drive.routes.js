@@ -21,6 +21,16 @@ import mongoose from "mongoose";
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
 const STUCK_OFF_ABSENCE_THRESHOLD = 3;
+const plannerReportCache = new Map();
+const PLANNER_REPORT_CACHE_MS = 15 * 1000;
+
+function plannerReportCacheKey(user, academicYear) {
+  return `${user._id}:${user.role}:${user.designation || ""}:${academicYear || "latest"}`;
+}
+
+function clearPlannerReportCache() {
+  plannerReportCache.clear();
+}
 
 const plannerColumnLayouts = {
   "2026": [
@@ -252,6 +262,7 @@ router.post("/planner/import", requireAuth, requireRole("HOD"), upload.single("f
     if (!records.length) return res.status(400).json({ message: "No Company Name rows were found. Please use the supplied planner headings." });
     if (req.body.replaceYear === "true") await PlacementRecord.deleteMany({ academicYear: records[0].academicYear, ...(req.body.batch ? { batch: req.body.batch } : {}) });
     await PlacementRecord.insertMany(records);
+    clearPlannerReportCache();
     res.status(201).json({ message: `${records.length} placement records imported`, count: records.length, academicYear: records[0].academicYear });
   } catch (error) { res.status(400).json({ message: error.message || "Planner import failed" }); }
 });
@@ -319,6 +330,7 @@ router.post("/planner/import-url", requireAuth, requireRole("HOD"), async (req, 
     if (req.body.replaceYear === "true") await PlacementRecord.deleteMany({ academicYear: records[0].academicYear, ...(req.body.batch ? { batch: req.body.batch } : {}) });
     else await PlacementRecord.deleteMany({ sourceSheetUrl: sheetUrl });
     await PlacementRecord.insertMany(records);
+    clearPlannerReportCache();
     res.status(201).json({ message: `${records.length} placement records linked from Google Sheet`, count: records.length, academicYear: records[0].academicYear });
   } catch (error) {
     res.status(400).json({ message: error.message || "Planner Google Sheet import failed" });
@@ -330,6 +342,7 @@ router.delete("/planner/records", requireAuth, requireRole("HOD"), async (req, r
   if (!academicYear) return res.status(400).json({ message: "academicYear is required" });
   const batch = String(req.query.batch || "").trim();
   const result = await PlacementRecord.deleteMany({ academicYear, ...(batch ? { batch } : {}) });
+  clearPlannerReportCache();
   res.json({ message: `${result.deletedCount} planner rows removed for ${batch ? `${batch} in ` : ""}${academicYear}`, deletedCount: result.deletedCount });
 });
 
@@ -338,11 +351,17 @@ router.delete("/planner/source", requireAuth, requireRole("HOD"), async (req, re
   const academicYear = String(req.query.academicYear || "").trim();
   if (!sourceFile) return res.status(400).json({ message: "sourceFile is required" });
   const result = await PlacementRecord.deleteMany({ sourceFile, ...(academicYear ? { academicYear } : {}) });
+  clearPlannerReportCache();
   res.json({ message: `${result.deletedCount} rows removed from ${sourceFile}.`, deletedCount: result.deletedCount });
 });
 
 router.get("/planner/report", requireAuth, async (req, res) => {
   try {
+    const requestedYear = String(req.query.academicYear || "");
+    const cacheKey = plannerReportCacheKey(req.user, requestedYear);
+    const cached = plannerReportCache.get(cacheKey);
+    if (cached && Date.now() - cached.createdAt < PLANNER_REPORT_CACHE_MS) return res.json(cached.data);
+    const startedAt = performance.now();
     const years = await PlacementRecord.distinct("academicYear");
     const sortedYears = years.map(String).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
     const academicYear = String(req.query.academicYear || sortedYears[0] || "");
@@ -408,7 +427,10 @@ router.get("/planner/report", requireAuth, async (req, res) => {
     };
     const requestFilter = req.user.role === "HOD" ? {} : { requester: req.user._id };
     const requests = await PlacementEditRequest.find(requestFilter).populate("record", "companyName jobProfile academicYear placementOfficer leadBy batch").populate("requester", "name designation").sort({ createdAt: -1 }).lean();
-    res.json({ academicYear, years: sortedYears, summary: summarize(records), officerReports: group("placementOfficer"), outreachReports: group("leadBy"), records, comparisonRecords, requests });
+    const data = { academicYear, years: sortedYears, summary: summarize(records), officerReports: group("placementOfficer"), outreachReports: group("leadBy"), records, comparisonRecords, requests };
+    plannerReportCache.set(cacheKey, { createdAt: Date.now(), data });
+    if (process.env.NODE_ENV !== "production") console.info(`[PERF] /api/drives/planner/report ${Math.round(performance.now() - startedAt)}ms`);
+    res.json(data);
   } catch (error) {
     console.error("Error in /planner/report:", error);
     res.status(500).json({ message: "Internal server error fetching report" });
@@ -475,8 +497,51 @@ router.post("/planner/records/:id/edit-request", requireAuth, async (req, res) =
   if (!field) return res.status(400).json({ message: "Select the field that needs correction" });
   const record = await PlacementRecord.findById(req.params.id);
   if (!record) return res.status(404).json({ message: "Placement record not found" });
+  const normalizeOwner = value => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const requester = normalizeOwner(req.user.name);
+  const belongsToRequester = [record.placementOfficer, record.leadBy].some(value => normalizeOwner(value) === requester);
+  if (!belongsToRequester) return res.status(403).json({ message: "You can request changes only for rows in your own placement sheet" });
   const request = await PlacementEditRequest.create({ record: record._id, requester: req.user._id, field, currentValue, requestedValue, reason });
+  clearPlannerReportCache();
+  await writeAudit({ actor: req.user._id, action: "PLACEMENT_RECORD_EDIT_REQUESTED", entity: "PlacementRecord", entityId: record._id, reason, metadata: { field, requestedValue } });
   res.status(201).json(request);
+});
+
+router.post("/planner/records", requireAuth, async (req, res) => {
+  try {
+    const editableFields = [
+      "ron", "placementOfficer", "companyCategory", "leadBy", "dateFloated", "dateOfDrive", "companyName", "jobProfile",
+      "packageText", "branch", "mode", "batch", "totalEligible", "totalRegistered", "dateSharedWithHr",
+      "dataShared", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate", "selections", "actualStatus",
+      "resultSharedBackend", "remarks", "academicYear"
+    ];
+    const numericFields = new Set(["totalEligible", "totalRegistered", "selections"]);
+    const dateFields = new Set(["dateFloated", "dateOfDrive", "dateSharedWithHr", "round1Date", "round2Date", "shortlistedDate", "finalSelectionDate"]);
+    const updates = {};
+    editableFields.forEach((field) => {
+      if (!(field in req.body)) return;
+      if (numericFields.has(field)) updates[field] = plannerNumber(req.body[field]);
+      else if (dateFields.has(field)) updates[field] = plannerDate(req.body[field]);
+      else updates[field] = String(req.body[field] ?? "");
+    });
+    if (!updates.companyName) return res.status(400).json({ message: "companyName is required" });
+    if (!updates.academicYear) return res.status(400).json({ message: "academicYear is required" });
+    if (req.user.role !== "HOD") {
+      updates.placementOfficer = String(req.user.name || req.body.placementOfficer || "").trim();
+      updates.leadBy = updates.placementOfficer;
+      updates.uploadedBy = req.user._id;
+      updates.sourceFile = String(req.body.sourceFile || "Officer Entry").trim();
+    } else {
+      updates.uploadedBy = req.user._id;
+    }
+    if ("packageText" in updates) updates.packageLpa = plannerPackageLpa(updates.packageText);
+    const record = await PlacementRecord.create(updates);
+    clearPlannerReportCache();
+    await writeAudit({ actor: req.user._id, action: "PLACEMENT_RECORD_ADDED", entity: "PlacementRecord", entityId: record._id, metadata: { academicYear: record.academicYear, companyName: record.companyName, placementOfficer: record.placementOfficer } });
+    res.status(201).json(record);
+  } catch (error) {
+    res.status(400).json({ message: error.message || "Unable to add planner row" });
+  }
 });
 
 router.patch("/planner/records/:id", requireAuth, requireRole("HOD"), async (req, res) => {
@@ -508,6 +573,8 @@ router.patch("/planner/records/:id", requireAuth, requireRole("HOD"), async (req
   }
   const record = await PlacementRecord.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
   if (!record) return res.status(404).json({ message: "Placement record not found" });
+  clearPlannerReportCache();
+  await writeAudit({ actor: req.user._id, action: "PLACEMENT_RECORD_UPDATED", entity: "PlacementRecord", entityId: record._id, metadata: updates });
   res.json({ ...record.toObject(), writeBack });
 });
 
@@ -545,12 +612,15 @@ router.post("/planner/edit-requests/:id/decision", requireAuth, requireRole("HOD
       }
     }
     await PlacementRecord.findByIdAndUpdate(request.record, updates, { runValidators: true });
+    clearPlannerReportCache();
   }
   request.status = status;
   request.remarks = String(req.body.remarks || "");
   request.reviewedBy = req.user._id;
   request.reviewedAt = new Date();
   await request.save();
+  clearPlannerReportCache();
+  await writeAudit({ actor: req.user._id, action: "PLACEMENT_EDIT_REQUEST_DECIDED", entity: "PlacementEditRequest", entityId: request._id, metadata: { status, record: request.record, field: request.field } });
   res.json(request);
 });
 

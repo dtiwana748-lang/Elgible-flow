@@ -25,17 +25,43 @@ export function clearAuthToken(message = "Authentication required") {
   window.dispatchEvent(new CustomEvent("eligible-flow-auth-expired", { detail: { message } }));
 }
 
+const inFlightGetRequests = new Map();
+
+function requestTimeoutFor(path) {
+  return path === "/auth/me" ? 7000 : 15000;
+}
+
 export async function api(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
   const token = getAuthToken();
+  const requestKey = method === "GET" && !options.signal ? `${token || "anonymous"}:${path}` : "";
+  if (requestKey && inFlightGetRequests.has(requestKey)) return inFlightGetRequests.get(requestKey);
+  const request = requestApi(path, options, token);
+  if (requestKey) {
+    inFlightGetRequests.set(requestKey, request);
+    request.finally(() => inFlightGetRequests.delete(requestKey)).catch(() => {});
+  }
+  return request;
+}
+
+async function requestApi(path, options, token) {
   const headers = new Headers(options.headers);
   if (!(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
   let response;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), requestTimeoutFor(path));
+  const abortFromCaller = () => controller.abort();
+  options.signal?.addEventListener("abort", abortFromCaller, { once: true });
   try {
-    response = await fetch(`${API_URL}${path}`, { ...options, headers });
-  } catch {
+    response = await fetch(`${API_URL}${path}`, { ...options, headers, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("The request timed out. Please try again.");
     throw new Error("API server is not reachable. Start the backend with npm run server, or run npm run dev from the project root.");
+  } finally {
+    window.clearTimeout(timeout);
+    options.signal?.removeEventListener("abort", abortFromCaller);
   }
   const data = await response.json().catch(() => ({}));
   const refreshedToken = response.headers.get("X-Auth-Token");

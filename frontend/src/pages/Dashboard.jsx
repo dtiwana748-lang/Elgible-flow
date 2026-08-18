@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   BarChart3, Bell, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, Database, Eye, FileSearch, FileSpreadsheet,
@@ -7,6 +7,25 @@ import {
 import { api, downloadApiFile } from "../api.js";
 import { assetUrl } from "../api.js";
 import { useAuth } from "../context/AuthContext.jsx";
+
+const plannerReportCache = new Map();
+const PLANNER_REPORT_CACHE_MS = 20 * 1000;
+
+function getPlannerReport(cacheKey, academicYear = "", force = false) {
+  const key = `${cacheKey}:${academicYear || "latest"}`;
+  const cached = plannerReportCache.get(key);
+  if (!force && cached && Date.now() - cached.createdAt < PLANNER_REPORT_CACHE_MS) return cached.promise;
+  const request = api(`/drives/planner/report${academicYear ? `?academicYear=${encodeURIComponent(academicYear)}` : ""}`);
+  plannerReportCache.set(key, { createdAt: Date.now(), promise: request });
+  request.catch(() => {
+    if (plannerReportCache.get(key)?.promise === request) plannerReportCache.delete(key);
+  });
+  return request;
+}
+
+function invalidatePlannerReports() {
+  plannerReportCache.clear();
+}
 
 const hodNav = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -26,6 +45,7 @@ const makerNav = (user) => {
   }
   return [
     { id: "report-cards", label: "Reports", icon: BarChart3 },
+    { id: "planner", label: "My Placement Sheet", icon: FileSpreadsheet },
     { id: "target-planner", label: "Target Planner", icon: Target },
     { id: "edit-requests", label: "Edit Requests", icon: FileSearch },
     { id: "profile", label: "Profile", icon: UserCog }
@@ -1690,9 +1710,9 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
 
   const overview = pageType === "dashboard";
 
-  async function load(selectedYear = year) {
+  async function load(selectedYear = year, force = false) {
     try {
-      const data = await api(`/drives/planner/report${selectedYear ? `?academicYear=${encodeURIComponent(selectedYear)}` : ""}`);
+      const data = await getPlannerReport(user._id || user.id || user.email || "planner", selectedYear, force);
       setReport(data); setYear(data.academicYear || selectedYear);
     } catch (error) { setMessage(error.message); }
   }
@@ -1701,11 +1721,6 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
     if (!isHead) return;
     api("/users").then((items) => setManagerUsers(items || [])).catch(() => setManagerUsers([]));
   }, [isHead]);
-  useEffect(() => {
-    if (pageType === "dashboard" && selectedBatch === "ALL") {
-      setSelectedBatch(defaultBatchForYear(year || currentYear));
-    }
-  }, [pageType, year, selectedBatch, currentYear]);
 
   async function uploadPlanner(event) {
     event.preventDefault();
@@ -1716,7 +1731,7 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
         method: "POST",
         body: JSON.stringify({ sheetUrl: plannerSheetUrl, appsScriptUrl: plannerAppsScriptUrl, academicYear: uploadYear, batch: uploadBatch, sheetName: uploadSheetName, replaceYear: String(replaceYearData) })
       });
-      setMessage(result.message); setYear(uploadYear); setSelectedBatch(uploadBatch); await load(uploadYear); setPreview(null); setPreviewSearch(""); setShowPlannerUpload(false);
+      invalidatePlannerReports(); setMessage(result.message); setYear(uploadYear); setSelectedBatch(uploadBatch); await load(uploadYear, true); setPreview(null); setPreviewSearch(""); setShowPlannerUpload(false);
     } catch (error) { setMessage(error.message); } finally { setBusy(false); }
   }
 
@@ -1742,7 +1757,7 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
       const targetYear = year || uploadYear;
       const batchQuery = selectedBatch !== "ALL" ? `&batch=${encodeURIComponent(selectedBatch)}` : "";
       const result = await api(`/drives/planner/records?academicYear=${encodeURIComponent(targetYear)}${batchQuery}`, { method: "DELETE" });
-      setMessage(result.message); await load(targetYear);
+      invalidatePlannerReports(); setMessage(result.message); await load(targetYear, true);
     } catch (error) { setMessage(error.message); } finally { setBusy(false); }
   }
 
@@ -1754,7 +1769,7 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
       setMessage(result.message);
       if (historyEditSource === confirmSourceDelete.sourceFile) setHistoryEditSource("");
       if (historyPreviewSource === confirmSourceDelete.sourceFile) setHistoryPreviewSource("");
-      await load(year);
+      invalidatePlannerReports(); await load(year, true);
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -1781,7 +1796,7 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
         })
       });
       setMessage(`${result.message}. Latest Google Sheet changes are now in the app.`);
-      await load(year);
+      invalidatePlannerReports(); await load(year, true);
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -1821,7 +1836,7 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
   async function requestCorrection(record, payload) {
     const reason = payload?.reason || window.prompt(`What should be corrected for ${record.companyName}?`);
     if (!reason) return;
-    try { await api(`/drives/planner/records/${record._id}/edit-request`, { method: "POST", body: JSON.stringify({ ...payload, reason }) }); setMessage("Correction request sent to the Head."); await load(year); }
+    try { await api(`/drives/planner/records/${record._id}/edit-request`, { method: "POST", body: JSON.stringify({ ...payload, reason }) }); setMessage("Correction request sent to the Head."); await load(year, true); }
     catch (error) { setMessage(error.message); }
   }
 
@@ -1851,7 +1866,7 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
         return;
       }
       setMessage(`Request ${status.toLowerCase()}.`);
-      await load(year);
+      invalidatePlannerReports(); await load(year, true);
     }
     catch (error) { setMessage(error.message); }
   }
@@ -1974,6 +1989,7 @@ function PlacementPlannerPage({ user, pageType = "dashboard" }) {
   const allGroups = reportGroups;
   
   const groups = selectedOfficer === "ALL" ? allGroups : allGroups.filter(g => g.name === selectedOfficer);
+  const [expandedReportGroups, setExpandedReportGroups] = useState({});
   const visibleRecords = selectedOfficer === "ALL" ? filteredRecords : (groups[0]?.records || []);
   const summary = summarizePlannerRows(visibleRecords);
   const uploadedYearOptions = (report?.years || []).map(String).filter(Boolean);
@@ -2211,7 +2227,7 @@ function doPost(e) {
           </label>
           <label>Planner row
             <select value={selectedRequestRecord?._id || ""} onChange={event => setRequestRecordId(event.target.value)} required>
-              {requestRows.map(record => <option key={record._id} value={record._id}>{record.companyName || "Unnamed company"} · {record.jobProfile || "No role"} · {record.batch || "No batch"}</option>)}
+              {requestRows.map(record => <option key={record._id} value={record._id}>{record.companyName || "Unnamed company"} Â· {record.jobProfile || "No role"} Â· {record.batch || "No batch"}</option>)}
             </select>
           </label>
           <label>Field to change
@@ -2253,7 +2269,7 @@ function doPost(e) {
     {false && isHead && pageType === "planner" && <section className="planner-sheet-status">
       <div>
         <span className="eyebrow">Current planner sheet</span>
-        <h3>{year || uploadYear} · {selectedBatchLabel}</h3>
+        <h3>{year || uploadYear} Â· {selectedBatchLabel}</h3>
         <p>{visibleRecords.length ? `${visibleRecords.length} rows loaded from ${activeSourceCount} uploaded source${activeSourceCount === 1 ? "" : "s"}.` : "No sheet is uploaded for this selection yet."}</p>
       </div>
       <div className="planner-status-actions">
@@ -2361,7 +2377,7 @@ function doPost(e) {
               <div>
                 <strong>{item.sourceFile}</strong>
                 <small>Uploaded {formatDateTime(item.uploadedAt)}</small>
-                <span>{item.rows} rows imported{item.firstRow ? `, sheet rows ${item.firstRow}-${item.lastRow}` : ""}{item.batches.length ? ` · Batch ${item.batches.join(", ")}` : ""}</span>
+                <span>{item.rows} rows imported{item.firstRow ? `, sheet rows ${item.firstRow}-${item.lastRow}` : ""}{item.batches.length ? ` Â· Batch ${item.batches.join(", ")}` : ""}</span>
               </div>
               <div className="planner-history-actions">
                 <button type="button" className="soft" onClick={() => { setHistoryPreviewSearch(""); setHistoryPreviewSource(item.sourceFile); }}><Eye size={15} /> Preview</button>
@@ -2440,7 +2456,7 @@ function doPost(e) {
       />
     )}
     
-    {isHead && report?.requests?.some(item => item.status === "PENDING") && pageType === "planner" && <section className="planner-requests"><h3>Pending report corrections</h3>{report.requests.filter(item => item.status === "PENDING").map(item => <article key={item._id}><div><strong>{item.requester?.name} · {item.record?.companyName}</strong><p>{item.reason}</p></div><button onClick={() => decideRequest(item._id, "APPROVED")}>Approve</button><button className="soft" onClick={() => decideRequest(item._id, "REJECTED")}>Reject</button></article>)}</section>}
+    {isHead && report?.requests?.some(item => item.status === "PENDING") && pageType === "planner" && <section className="planner-requests"><h3>Pending report corrections</h3>{report.requests.filter(item => item.status === "PENDING").map(item => <article key={item._id}><div><strong>{item.requester?.name} Â· {item.record?.companyName}</strong><p>{item.reason}</p></div><button onClick={() => decideRequest(item._id, "APPROVED")}>Approve</button><button className="soft" onClick={() => decideRequest(item._id, "REJECTED")}>Reject</button></article>)}</section>}
     
     {confirmSourceDelete && (
       <ConfirmDialog
@@ -2462,7 +2478,11 @@ function doPost(e) {
 
     {(pageType === "report-cards" || (pageType === "dashboard" && !isHigherAuthority)) && (
       <section className="planner-groups" style={{ marginTop: '2rem' }}>
-        {groups.map((group, index) => <PlannerReportCard key={`${group.outreach}-${group.name}-${index}`} group={group} year={year} selectedBatch={selectedBatch} canEdit={isHead} canRequest={!isHead} requests={report?.requests || []} onRequest={requestCorrection} onReload={() => load(year)} />)}
+        {groups.map((group, index) => {
+          const reportKey = `${group.outreach}-${group.name}-${index}`;
+          const collapsed = !expandedReportGroups[reportKey];
+          return <PlannerReportCard key={reportKey} group={group} year={year} selectedBatch={selectedBatch} collapsed={collapsed} onToggleExpanded={() => setExpandedReportGroups(current => ({ ...current, [reportKey]: !current[reportKey] }))} canEdit={isHead} canRequest={!isHead} requests={report?.requests || []} onRequest={requestCorrection} onReload={() => load(year)} />;
+        })}
         {!groups.length && <EmptyState icon={FileSpreadsheet} message="Upload a planner sheet to generate year-wise report cards" />}
       </section>
     )}
@@ -2478,6 +2498,8 @@ function doPost(e) {
           memberName={isHead ? selectedOfficer : (groups[0]?.name || user.name)}
           records={isHead ? groups.find(group => group.name === selectedOfficer)?.records || [] : groups[0]?.records || []}
           onReload={() => load(year)}
+          canEdit={isHead}
+          canRequest={!isHead}
         />
       </section>
     )}
@@ -3022,7 +3044,7 @@ function PlannerRequestsPage() {
             <strong>{item.requestedValue || "-"}</strong>
           </div>}
           <p>{item.reason || "No correction note provided."}</p>
-          <small className="request-meta-line">{item.requester?.name || "Manager"} requested this for {rowOwner}{item.reviewedAt ? ` · Reviewed ${formatDateTime(item.reviewedAt)}` : ""}</small>
+          <small className="request-meta-line">{item.requester?.name || "Manager"} requested this for {rowOwner}{item.reviewedAt ? ` Â· Reviewed ${formatDateTime(item.reviewedAt)}` : ""}</small>
         </div>
         {item.status === "PENDING" && (
           <div className="request-card-actions">
@@ -3079,10 +3101,12 @@ function PlannerRequestsPage() {
   );
 }
 
-function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canRequest, requests = [], onRequest, onReload }) {
+function PlannerReportCard({ group, year, selectedBatch = "ALL", collapsed = false, onToggleExpanded, canEdit, canRequest, requests = [], onRequest, onReload }) {
   const [activeSummary, setActiveSummary] = useState("");
   const [activeChartDetail, setActiveChartDetail] = useState("");
   const [summarySearch, setSummarySearch] = useState("");
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
+  const [detailColumns, setDetailColumns] = useState(["companyName", "jobProfile", "placementOfficer", "leadBy", "batch", "actualStatus"]);
   const [detailDrafts, setDetailDrafts] = useState({});
   const [detailMessage, setDetailMessage] = useState("");
   const [savingDetailId, setSavingDetailId] = useState("");
@@ -3095,12 +3119,12 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
     "companyName", "jobProfile", "placementOfficer", "leadBy", "dateFloated", "dateOfDrive", "batch", "actualStatus", "finalSelectionDate",
     "totalEligible", "totalRegistered", "selections", "packageText", "remarks"
   ];
-  const requestsByRecord = requests.reduce((map, item) => {
+  const requestsByRecord = useMemo(() => requests.reduce((map, item) => {
     const recordId = String(item.record?._id || item.record || "");
     if (!recordId) return map;
     (map[recordId] ||= []).push(item);
     return map;
-  }, {});
+  }, {}), [requests]);
   
   // Calculate metrics
   const categoryCount = label => rows.filter(row => String(row.companyCategory || "").toLowerCase().includes(label)).length;
@@ -3114,8 +3138,8 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
   const targetAllotted = rows.length;
   const overallAchievement = Math.round((s.closed / Math.max(1, targetAllotted)) * 100);
   
-  const nilSelections = rows.filter(r => r.selections === 0 && r.actualStatus?.toLowerCase().includes("closed")).length;
-  const withSelections = rows.filter(r => r.selections > 0 && r.actualStatus?.toLowerCase().includes("closed")).length;
+  const nilSelections = useMemo(() => rows.filter(r => r.selections === 0 && r.actualStatus?.toLowerCase().includes("closed")).length, [rows]);
+  const withSelections = useMemo(() => rows.filter(r => r.selections > 0 && r.actualStatus?.toLowerCase().includes("closed")).length, [rows]);
   const totalClosed = s.closed || 1;
   
   const closureNilPct = Math.round((nilSelections / totalClosed) * 100);
@@ -3186,13 +3210,14 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
   ];
   const activeChartTitle = activeChartDetail === "performance" ? "Performance Overview" : activeChartDetail === "closure" ? "Closure Performance" : "";
   const salesInsight = salesCount >= coreCount ? "Sales-led performance" : "Core-led performance";
-  const summaryCards = [
+  const summaryCards = useMemo(() => [
     {
       key: "target",
       icon: Crop,
       value: targetAllotted,
       label: "Target",
       text: "Annual placement target set for overall companies.",
+      defaultFields: ["companyName", "jobProfile", "placementOfficer", "leadBy", "batch", "actualStatus", "totalEligible", "totalRegistered"],
       filter: record => record,
       note: `${targetAllotted} total planner rows are counted as the current target set.`
     },
@@ -3202,6 +3227,7 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
       value: `${overallAchievement}%`,
       label: "Overall Achievement",
       text: `${s.closed || 0} companies closed against the target.`,
+      defaultFields: ["companyName", "jobProfile", "placementOfficer", "leadBy", "batch", "actualStatus", "finalSelectionDate", "selections", "remarks"],
       filter: record => /closed|complete|selected/i.test(record.actualStatus || ""),
       note: `${s.closed || 0} closed companies out of ${targetAllotted || 0} target rows.`
     },
@@ -3211,6 +3237,7 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
       value: totalSelections,
       label: "Students Selected",
       text: "Strong student interest and engagement.",
+      defaultFields: ["companyName", "jobProfile", "placementOfficer", "leadBy", "batch", "actualStatus", "totalEligible", "totalRegistered", "selections"],
       filter: record => Number(record.selections || 0) > 0,
       note: `${totalSelections} total selections from rows where selections are greater than zero.`
     },
@@ -3220,6 +3247,7 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
       value: salesCount,
       label: "Sales Selections",
       text: "Primary strength in sales domain placements.",
+      defaultFields: ["companyName", "jobProfile", "placementOfficer", "leadBy", "batch", "actualStatus", "selections", "packageText", "remarks"],
       filter: record => !String(record.companyCategory || "").toLowerCase().includes("core"),
       note: `${salesCount} rows are treated as sales/non-core placement rows.`
     },
@@ -3229,16 +3257,50 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
       value: coreCount,
       label: "Core Selections",
       text: "Focused effort on high-potential core opportunities.",
+      defaultFields: ["companyName", "jobProfile", "placementOfficer", "leadBy", "batch", "actualStatus", "selections", "packageText", "remarks"],
       filter: record => String(record.companyCategory || "").toLowerCase().includes("core"),
       note: `${coreCount} rows are marked as core placement opportunities.`
     }
-  ];
-  const activeSummaryCard = summaryCards.find(card => card.key === activeSummary);
-  const summaryRows = activeSummaryCard
-    ? rows
-      .filter(activeSummaryCard.filter)
-      .filter(record => [record.companyName, record.jobProfile, record.placementOfficer, record.leadBy, record.actualStatus, record.batch].join(" ").toLowerCase().includes(summarySearch.toLowerCase()))
-    : [];
+  ], [coreCount, nilSelections, overallAchievement, s.closed, salesCount, targetAllotted, totalSelections, withSelections]);
+  const activeSummaryCard = useMemo(() => summaryCards.find(card => card.key === activeSummary), [activeSummary, summaryCards]);
+  const availableDetailColumns = useMemo(() => [
+    ["companyName", "Company"], ["jobProfile", "Job Profile"], ["placementOfficer", "Officer"], ["leadBy", "Lead By"],
+    ["batch", "Batch"], ["actualStatus", "Status"], ["dateFloated", "Date Floated"], ["dateOfDrive", "Drive Date"],
+    ["finalSelectionDate", "Final Selection Date"], ["totalEligible", "Eligible"], ["totalRegistered", "Registered"],
+    ["selections", "Selections"], ["packageText", "Package"], ["remarks", "Remarks"]
+  ], []);
+  const visibleDetailColumns = useMemo(() => availableDetailColumns.filter(([key]) => detailColumns.includes(key)), [availableDetailColumns, detailColumns]);
+  const openSummary = (card) => {
+    if (activeSummary === card.key) {
+      setActiveSummary("");
+      setShowColumnPicker(false);
+      return;
+    }
+    setDetailColumns(card.defaultFields);
+    setSummarySearch("");
+    setShowColumnPicker(false);
+    setActiveSummary(card.key);
+  };
+  const downloadDetailExcel = () => {
+    const xmlEscape = (value) => String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[character]));
+    const cells = (values) => values.map(value => `<Cell><Data ss:Type="String">${xmlEscape(value)}</Data></Cell>`).join("");
+    const spreadsheet = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="${xmlEscape(activeSummaryCard?.label || "Report")}"><Table><Row>${cells(visibleDetailColumns.map(([, label]) => label))}</Row>${summaryRows.map(record => `<Row>${cells(visibleDetailColumns.map(([key]) => record[key] ?? ""))}</Row>`).join("")}</Table></Worksheet></Workbook>`;
+    const blob = new Blob([spreadsheet], { type: "application/vnd.ms-excel;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${String(activeSummaryCard?.label || "placement-report").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase()}-${new Date().toISOString().slice(0, 10)}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+  };
+  const summaryRows = useMemo(() => (
+    activeSummaryCard
+      ? rows
+        .filter(activeSummaryCard.filter)
+        .filter(record => [record.companyName, record.jobProfile, record.placementOfficer, record.leadBy, record.actualStatus, record.batch].join(" ").toLowerCase().includes(summarySearch.toLowerCase()))
+      : []
+  ), [activeSummaryCard, rows, summarySearch]);
   const detailField = (record, key) => detailDrafts[record._id]?.[key] ?? (record[key] ?? "");
   const detailInput = (record, key, type = "text") => (
     <input
@@ -3310,9 +3372,35 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
       setRequestBusy(false);
     }
   };
-
+  const downloadPdfReport = () => {
+    const escapeHtml = (value) => String(value ?? "-").replace(/[&<>'"]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[character]));
+    const reportRows = (title, values) => `<section class="metric-card"><h2>${escapeHtml(title)}</h2><table><tbody>${values.map(([label, value]) => `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`).join("")}</tbody></table></section>`;
+    const documentTitle = `${group.name || "Placement"} Placement Officer Report`;
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      setDetailMessage("Your browser blocked the PDF window. Allow pop-ups and try again.");
+      return;
+    }
+    printWindow.opener = null;
+    const overallRows = [
+      ["Target", targetAllotted], ["Overall Companies", s.floated || 0], ["Closed", s.closed || 0], ["Closed Target Achieved", `${overallAchievement}%`],
+      ["Closure Nil Selection %", `${closureNilPct}%`], ["Closure with Selection %", `${closureWithPct}%`], ["Company closed with Nil Selections", nilSelections], ["Companies with Selection", withSelections], ["Selected Students", totalSelections], ["Core Companies", coreCount], ["Sales Companies", salesCount]
+    ];
+    const batchRows = (batch) => [["Target", batch.target], ["Overall Companies", batch.floated], ["Closed", batch.closed], ["Closed Target Achieved", `${batch.achievedPct}%`], ["Closure Nil Selection %", `${batch.nilPct}%`], ["Closure with Selection %", `${batch.withPct}%`], ["Company closed with Nil Selections", batch.nil], ["Companies with Selection", batch.withSel], ["Selected Students", batch.selected], ["Core Companies", batch.core], ["Sales Companies", batch.sales]];
+    const reportDate = new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" });
+    const seriesBars = (key) => metricSeries.map(series => `<div class="bar-set"><div class="bar ${series.className}" style="height:${Math.max(5, Math.min(100, Math.round((Number(series.data[key] || 0) / Math.max(1, targetAllotted, totalSelections, s.floated || 0)) * 100)))}%"><span>${escapeHtml(series.data[key] || 0)}</span></div></div>`).join("");
+    const performanceChart = `<section class="chart-card"><h2>PERFORMANCE OVERVIEW</h2><div class="legend">${metricSeries.map(series => `<span><i class="${series.className}"></i>${escapeHtml(series.label)}</span>`).join("")}</div><div class="bar-chart">${performanceMetrics.map(([label, key]) => `<div class="chart-column"><div class="bar-stack">${seriesBars(key)}</div><strong>${escapeHtml(label)}</strong></div>`).join("")}</div><p>Performance is calculated from the selected officer's linked planner rows.</p></section>`;
+    const closureChart = `<section class="chart-card"><h2>CLOSURE PERFORMANCE (%)</h2><div class="legend">${metricSeries.map(series => `<span><i class="${series.className}"></i>${escapeHtml(series.label)}</span>`).join("")}</div><div class="closure-grid">${closureMetrics.map(([label, key]) => `<article><div class="ring" style="--ring:${Math.max(0, Math.min(100, Number(metricSeries[0].data[key] || 0)))}"><b>${escapeHtml(metricSeries[0].data[key] || 0)}%</b></div><strong>${escapeHtml(label)}</strong><small>Overall since inception</small></article>`).join("")}</div></section>`;
+    const bottomPanels = `<div class="bottom-grid"><section class="info-card sales-card"><h2>SALES VS CORE FOCUS</h2><div class="focus-row"><b>${salesPct}%</b><div><strong>Sales Companies · ${salesCount}</strong><p>Primary strength and key focus area.</p></div></div><div class="focus-row core"><b>${corePct}%</b><div><strong>Core Companies · ${coreCount}</strong><p>Selective focus on high-potential opportunities.</p></div></div></section><section class="info-card"><h2>KEY HIGHLIGHTS</h2><ul><li><b>${escapeHtml(salesInsight)}.</b> ${salesCount} sales and ${coreCount} core companies.</li><li><b>${s.closed || 0} companies closed</b> out of ${s.floated || 0} floated companies.</li><li><b>${closureNilPct}% nil-selection closure</b> needs conversion attention.</li><li><b>${totalSelections} total selections.</b> Focus remains on quality placements.</li></ul></section><section class="info-card action-card"><h2>KEY TAKEAWAYS &amp; ACTION PLAN</h2><ul><li>Increase closure with selection through student readiness.</li><li>Reduce nil selections with stronger pre-qualification.</li><li>Expand high-converting sales opportunities.</li><li>Build long-term core-domain relationships.</li><li>Maintain consistent follow-ups.</li></ul></section></div>`;
+    printWindow.document.write(`<!doctype html><html><head><title>${escapeHtml(documentTitle)}</title><style>
+      @page{size:A4 portrait;margin:13mm 12mm 14mm}*{box-sizing:border-box}html,body{margin:0;padding:0}body{font-family:Arial,sans-serif;color:#10233e;-webkit-print-color-adjust:exact;print-color-adjust:exact}.page{width:100%;break-inside:avoid;page-break-inside:avoid}.page-one{page-break-after:always}.page-two{break-before:avoid;page-break-before:avoid;page-break-after:auto}.report-header{display:flex;justify-content:space-between;gap:18px;padding:18px 20px;background:#071b3a;color:#fff;border-radius:12px}.eyebrow{color:#f49aa7;font-size:9px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase}.report-header h1{margin:5px 0;font-size:25px;line-height:1.08}.report-header h1 span{display:block;font-size:15px;font-weight:600;color:#cce5fa;margin-top:5px}.report-header p{margin:0;color:#d8eafb;font-size:10px}.header-chip{align-self:center;padding:9px 12px;border:1px solid #7eb8e7;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap}.section-title{margin:14px 0 0;padding:8px;background:#dff4ff;border:1px solid #b8def1;border-bottom:0;border-radius:9px 9px 0 0;color:#0c4a82;text-align:center;font-size:11px;letter-spacing:1.4px}.summary{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;padding:9px;border:1px solid #b8def1;border-radius:0 0 9px 9px}.summary article{min-height:91px;padding:10px;border:1px solid #a9d5ed;border-radius:8px;background:#fff}.summary span{display:block;color:#36516d;font-size:9px;font-weight:800;text-transform:uppercase}.summary strong{display:block;margin:8px 0 5px;color:#08284f;font-size:23px}.summary small{display:block;color:#597086;font-size:8.5px;line-height:1.3}.table-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:14px}.metric-card,.chart-card,.info-card{overflow:hidden;border:1px solid #9fdbf4;border-radius:9px;background:#fff;break-inside:avoid;page-break-inside:avoid}.metric-card h2,.chart-card h2,.info-card h2{margin:0;padding:9px 8px;background:#dff4ff;color:#06447e;text-align:center;font-size:9.5px;letter-spacing:.65px}.metric-card table{width:100%;border-collapse:collapse;table-layout:fixed}.metric-card th,.metric-card td{padding:6px 7px;border-bottom:1px solid #dce9f1;font-size:8.4px;line-height:1.15}.metric-card th{width:73%;color:#39536d;text-align:left;font-weight:600}.metric-card td{width:27%;color:#071b3a;text-align:right;font-weight:800;white-space:nowrap}.metric-card tr:last-child>*{border-bottom:0}.foot{margin:9px 2px 0;color:#61758a;font-size:8.5px}.charts{display:grid;grid-template-columns:1.22fr .98fr;gap:10px;margin-top:0}.chart-card{min-height:270px}.legend{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:8px 9px 2px;color:#486078;font-size:8px;font-weight:700}.legend span{display:flex;align-items:center;gap:4px}.legend i{width:9px;height:9px;border-radius:2px}.dark{background:#071b3a}.mid{background:#0a5ea8}.light{background:#53b4e5}.bar-chart{height:171px;display:flex;align-items:stretch;justify-content:space-around;gap:5px;margin:6px 10px 0;padding:0 4px;border-bottom:1px solid #a9c7dc}.chart-column{display:flex;flex:1;min-width:0;flex-direction:column;justify-content:flex-end;align-items:center;gap:5px}.bar-stack{height:136px;width:100%;display:flex;align-items:flex-end;justify-content:center;gap:3px}.bar-set{height:100%;display:flex;align-items:flex-end}.bar{position:relative;width:12px;min-height:7px;border-radius:3px 3px 0 0}.bar span{position:absolute;bottom:calc(100% + 3px);left:50%;transform:translateX(-50%);font-size:7px;font-weight:800;color:#233a56}.chart-column>strong{min-height:24px;color:#405a74;font-size:7.5px;line-height:1.15;text-align:center}.chart-card>p{margin:6px 10px 8px;color:#62778a;font-size:8px;text-align:center}.closure-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;padding:18px 10px}.closure-grid article{text-align:center}.ring{--ring:0;position:relative;display:grid;place-items:center;width:70px;height:70px;margin:0 auto 8px;border-radius:50%;background:conic-gradient(#071b3a calc(var(--ring) * 1%),#dcecf5 0)}.ring:before{content:"";position:absolute;width:53px;height:53px;border-radius:50%;background:#fff}.ring b{position:relative;z-index:1;color:#071b3a;font-size:13px}.closure-grid strong{display:block;color:#334d67;font-size:8px;line-height:1.25}.closure-grid small{display:block;margin-top:4px;color:#7a8b9b;font-size:7px}.bottom-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:10px;break-inside:avoid;page-break-inside:avoid}.info-card{min-height:178px}.info-card h2{background:#dff4ff}.info-card ul{margin:0;padding:9px 13px 10px 24px;color:#405a73}.info-card li{margin:0 0 7px;font-size:8px;line-height:1.3}.info-card li:last-child{margin-bottom:0}.sales-card{padding-bottom:7px}.focus-row{display:flex;align-items:center;gap:8px;margin:8px 10px;padding-bottom:8px;border-bottom:1px solid #dce9f1}.focus-row:last-child{border-bottom:0}.focus-row>b{display:grid;place-items:center;flex:0 0 40px;width:40px;height:40px;border-radius:50%;background:#071b3a;color:#fff;font-size:9px}.focus-row.core>b{background:#0a5ea8}.focus-row strong{color:#183a62;font-size:8.5px}.focus-row p{margin:3px 0 0;color:#63788d;font-size:7.5px;line-height:1.25}.action-card h2{background:#071b3a;color:#fff}.action-card li{color:#334d67}@media print{.page-one{page-break-after:always}.page-two{page-break-before:avoid;page-break-after:auto}.metric-card,.chart-card,.info-card{break-inside:avoid;page-break-inside:avoid}}
+    </style></head><body><div class="page page-one"><header class="report-header"><div><div class="eyebrow">Placement Report</div><h1>${escapeHtml(group.name)}<span>Placement Officer Report</span></h1><p>Batch: ${escapeHtml(selectedBatch === "ALL" ? "All Batches" : selectedBatch)} · Generated ${escapeHtml(reportDate)}</p></div><div class="header-chip">Data as on ${escapeHtml(reportDate)}</div></header><h2 class="section-title">PROFESSIONAL SUMMARY</h2><section class="summary">${summaryCards.map(card => `<article><span>${escapeHtml(card.label)}</span><strong>${escapeHtml(card.value)}</strong><small>${escapeHtml(card.text)}</small></article>`).join("")}</section><main class="table-grid">${reportRows("Overall Performance Since Inception", overallRows)}${reportRows(batchTitle(batchOneName), batchRows(batchOne))}${reportRows(hasPastBatch ? batchTitle(batchTwoName) : "PAST BATCH", hasPastBatch ? batchRows(batchTwo) : [["Status", "No data available"]])}</main><p class="foot">This report is calculated directly from the linked company tracker.</p></div><div class="page page-two"><div class="charts">${performanceChart}${closureChart}</div>${bottomPanels}</div></body></html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    requestAnimationFrame(() => printWindow.print());
+  };
   return (
-    <article className="prc-v2-container">
+    <article className={`prc-v2-container ${collapsed ? "prc-v2-card-collapsed" : ""}`}>
       {/* HEADER */}
       <header className="prc-v2-header">
         <div className="prc-v2-header-left">
@@ -3341,8 +3429,10 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
               key={card.key}
               className={`prc-v2-summary-box ${activeSummary === card.key ? "active" : ""}`}
               data-tooltip={`Calculated from planner rows: ${card.note}`}
-              title={`Calculated from planner rows: ${card.note}`}
-              onClick={() => setActiveSummary(activeSummary === card.key ? "" : card.key)}
+              title={`Open the ${card.label} report. ${card.note}`}
+              aria-haspopup="dialog"
+              aria-label={`Open dedicated ${card.label} report`}
+              onClick={() => openSummary(card)}
             >
               <div className="prc-v2-summary-icon"><Icon size={24} /></div>
               <strong>{card.value}</strong>
@@ -3351,6 +3441,12 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
             </button>
           );
         })}
+      </div>
+      <div className="prc-v2-summary-actions">
+        <button type="button" className="prc-v2-pdf" onClick={downloadPdfReport}><FileDown size={17} /> Download PDF</button>
+        <button type="button" className="prc-v2-expand" onClick={onToggleExpanded} aria-label={`${collapsed ? "Open" : "Collapse"} ${group.name}'s report`} title={collapsed ? "Open full report" : "Show summary only"}>
+          <span>{collapsed ? "View full report" : "Show summary"}</span><ChevronRight size={22} />
+        </button>
       </div>
       {activeSummaryCard && createPortal(
         <div className="modal-overlay report-detail-overlay">
@@ -3362,7 +3458,17 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
               <p>{activeSummaryCard.note}</p>
             </div>
             <label className="stat-search"><Search size={16} /><input value={summarySearch} onChange={event => setSummarySearch(event.target.value)} placeholder="Search company, officer, batch, status" /></label>
-            <button type="button" className="soft report-detail-close" onClick={() => { setActiveSummary(""); setSummarySearch(""); }}><X size={17} /> Close</button>
+            <div className="report-detail-actions">
+              <div className="detail-column-picker">
+                <button type="button" className="soft" onClick={() => setShowColumnPicker(value => !value)}><Settings2 size={16} /> Fields</button>
+                {showColumnPicker && <div className="detail-column-menu">
+                  <strong>Display fields</strong>
+                  {availableDetailColumns.map(([key, label]) => <label key={key}><input type="checkbox" checked={detailColumns.includes(key)} onChange={() => setDetailColumns(current => current.includes(key) ? current.filter(item => item !== key) : [...current, key])} /> {label}</label>)}
+                </div>}
+              </div>
+              <button type="button" className="soft detail-excel-download" onClick={downloadDetailExcel} disabled={!visibleDetailColumns.length}><FileDown size={16} /> Excel</button>
+              <button type="button" className="soft report-detail-close" onClick={() => { setActiveSummary(""); setSummarySearch(""); setShowColumnPicker(false); }}><X size={17} /> Close</button>
+            </div>
           </header>
           {detailMessage && <div className={`notice ${/blocked|failed|unable|not changed/i.test(detailMessage) ? "error-notice" : "success-notice"}`}>{detailMessage}</div>}
           <div className="report-detail-kpis">
@@ -3373,33 +3479,23 @@ function PlannerReportCard({ group, year, selectedBatch = "ALL", canEdit, canReq
           </div>
           <div className="stat-detail-table">
             <table>
-              <thead><tr><th>Company</th><th>Job Profile</th><th>Officer</th><th>Lead By</th><th>Batch</th><th>Status</th><th>Eligible</th><th>Registered</th><th>Selections</th><th>Package</th><th>Remarks</th>{(canEdit || canRequest) && <th>Action / Request</th>}</tr></thead>
+              <thead><tr>{visibleDetailColumns.map(([key, label]) => <th key={key}>{label}</th>)}{(canEdit || canRequest) && <th>Action / Request</th>}</tr></thead>
               <tbody>
                 {summaryRows.map(record => {
                   const recordRequests = requestsByRecord[String(record._id)] || [];
                   const latestRequest = recordRequests[0];
                   return (
                     <tr key={record._id}>
-                      <td title={record.companyName || "-"}>{canEdit ? detailInput(record, "companyName") : (record.companyName || "-")}</td>
-                      <td title={record.jobProfile || "-"}>{canEdit ? detailInput(record, "jobProfile") : (record.jobProfile || "-")}</td>
-                      <td title={record.placementOfficer || "-"}>{canEdit ? detailInput(record, "placementOfficer") : (record.placementOfficer || "-")}</td>
-                      <td title={record.leadBy || "-"}>{canEdit ? detailInput(record, "leadBy") : (record.leadBy || "-")}</td>
-                      <td title={record.batch || "-"}>{canEdit ? detailInput(record, "batch") : (record.batch || "-")}</td>
-                      <td title={record.actualStatus || "-"}>{canEdit ? detailInput(record, "actualStatus") : (record.actualStatus || "-")}</td>
-                      <td title={String(record.totalEligible || 0)}>{canEdit ? detailInput(record, "totalEligible", "number") : (record.totalEligible || 0)}</td>
-                      <td title={String(record.totalRegistered || 0)}>{canEdit ? detailInput(record, "totalRegistered", "number") : (record.totalRegistered || 0)}</td>
-                      <td title={String(record.selections || 0)}>{canEdit ? detailInput(record, "selections", "number") : (record.selections || 0)}</td>
-                      <td title={record.packageText || String(record.packageLpa || "-")}>{canEdit ? detailInput(record, "packageText") : (record.packageText || record.packageLpa || "-")}</td>
-                      <td title={record.remarks || "-"}>{canEdit ? detailInput(record, "remarks") : (record.remarks || "-")}</td>
+                      {visibleDetailColumns.map(([key]) => <td key={key} title={String(record[key] ?? "-")}>{canEdit ? detailInput(record, key, ["totalEligible", "totalRegistered", "selections"].includes(key) ? "number" : "text") : (record[key] ?? "-")}</td>)}
                       {canEdit && <td><button className="detail-save-btn" disabled={!detailDrafts[record._id] || savingDetailId === record._id} onClick={() => saveDetailRecord(record)}><Save size={14} /> {savingDetailId === record._id ? "Saving" : "Save"}</button></td>}
                       {canRequest && <td className="request-action-cell">
-                        {latestRequest && <span className={`request-status ${String(latestRequest.status || "").toLowerCase()}`}>{latestRequest.status} {latestRequest.field ? `· ${labelFor(latestRequest.field)}` : ""}</span>}
+                        {latestRequest && <span className={`request-status ${String(latestRequest.status || "").toLowerCase()}`}>{latestRequest.status} {latestRequest.field ? `Â· ${labelFor(latestRequest.field)}` : ""}</span>}
                         <button type="button" className="soft detail-request-btn" onClick={() => openEditRequest(record)}><FileSearch size={14} /> Request Edit</button>
                       </td>}
                     </tr>
                   );
                 })}
-                {!summaryRows.length && <tr><td colSpan={(canEdit || canRequest) ? 12 : 11}>No rows found for this report stat.</td></tr>}
+                {!summaryRows.length && <tr><td colSpan={visibleDetailColumns.length + ((canEdit || canRequest) ? 1 : 0)}>No rows found for this report stat.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -4180,7 +4276,7 @@ function DriveWisePage({ user, initialTab = "drives" }) {
             <div className="format-rules">
               <div><strong>Required for matching</strong><span>Use Roll No for every student. Email may be used as a second reliable identifier.</span></div>
               <div><strong>Company and status</strong><span>Company name, Eligible, and Registered should be filled for every row. Use Yes/No.</span></div>
-              <div><strong>Company process fields</strong><span>Add any round after Registered—such as Aptitude Test, GD, Technical, or HR. Use Present/Absent or Qualified/Not Qualified.</span></div>
+              <div><strong>Company process fields</strong><span>Add any round after Registeredâ€”such as Aptitude Test, GD, Technical, or HR. Use Present/Absent or Qualified/Not Qualified.</span></div>
               <div><strong>Avoid spreadsheet issues</strong><span>Do not merge cells, add title rows, or leave blank student rows. Save Roll No as Text to preserve leading zeroes.</span></div>
             </div>
           </section>
@@ -5562,7 +5658,7 @@ function StudentRequestsPage() {
             <header>
               <div className="manager-name-cell">
                 <div className="header-profile manager-avatar"><span>{request.studentName?.slice(0, 1).toUpperCase()}</span></div>
-                <div><h3>{request.studentName}</h3><p>{request.rollNo} · {request.student?.department || request.student?.branch || "-"}</p></div>
+                <div><h3>{request.studentName}</h3><p>{request.rollNo} Â· {request.student?.department || request.student?.branch || "-"}</p></div>
               </div>
               <div><span className={`status ${request.status === "PENDING" ? "pending" : request.status === "APPROVED" ? "approved" : "rejected"}`}>{request.status}</span><small>{formatDateTime(request.createdAt)}</small></div>
             </header>
@@ -6511,7 +6607,7 @@ function EligibilityListDetailPage({ list: initialList, back, isHod = false }) {
             ))}
           </div>
           <div className="eligibility-export-footer">
-            <span><strong>{selectedExportFields.length}</strong> fields selected{searchTerm.trim() ? ` · Search filter: “${searchTerm.trim()}”` : ""}</span>
+            <span><strong>{selectedExportFields.length}</strong> fields selected{searchTerm.trim() ? ` Â· Search filter: â€œ${searchTerm.trim()}â€` : ""}</span>
             <button type="button" onClick={exportList} disabled={!selectedExportFields.length || exporting}>
               <FileDown size={17} /> {exporting ? "Preparing..." : `Download ${exportFormat.toUpperCase()}`}
             </button>
@@ -6973,7 +7069,7 @@ function StudentDrawer({ payload, close, onUpdateRestriction, readOnly = false }
                     <div style={{ display: "grid", gap: "8px", textAlign: "left", fontSize: "12px" }}>
                       {restrictionEdits.map((edit, index) => (
                         <div key={index} style={{ padding: "6px 8px", background: "white", border: "1px solid var(--line)", borderRadius: "6px" }}>
-                          <span style={{ color: "var(--muted)" }}>{new Date(edit.editedAt).toLocaleString()}</span> — 
+                          <span style={{ color: "var(--muted)" }}>{new Date(edit.editedAt).toLocaleString()}</span> â€” 
                           Changed status to <strong>{edit.newValue}</strong> by <strong>{edit.editedBy?.name || edit.editedBy?.email || "System"}</strong>. 
                           {edit.reason && <p style={{ margin: "4px 0 0 0", color: "#475569" }}><em>Reason: {edit.reason}</em></p>}
                         </div>
@@ -7293,14 +7389,26 @@ const placementSheetColumns = [
   ["remarks", "Remarks", "text"]
 ];
 
-function EditablePlacementSheet({ year, memberName, records, onReload, onClose }) {
+function EditablePlacementSheet({ year, memberName, records, onReload, onClose, canEdit = false, canRequest = false }) {
   const [drafts, setDrafts] = useState({});
   const [savingId, setSavingId] = useState("");
   const [message, setMessage] = useState("");
+  const [requestDraft, setRequestDraft] = useState(null);
+  const [requestBusy, setRequestBusy] = useState(false);
+  const [requestMessage, setRequestMessage] = useState("");
+  const [showAddRow, setShowAddRow] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [addMessage, setAddMessage] = useState("");
+  const [newRecord, setNewRecord] = useState({ academicYear: year || "", companyName: "", jobProfile: "", packageText: "", companyCategory: "", dateFloated: "", dateOfDrive: "", branch: "", mode: "", batch: "", totalEligible: "", totalRegistered: "", selections: "", actualStatus: "", remarks: "" });
 
   useEffect(() => {
     setDrafts({});
     setMessage("");
+    setRequestDraft(null);
+    setRequestMessage("");
+    setShowAddRow(false);
+    setAddMessage("");
+    setNewRecord({ academicYear: year || "", companyName: "", jobProfile: "", packageText: "", companyCategory: "", dateFloated: "", dateOfDrive: "", branch: "", mode: "", batch: "", totalEligible: "", totalRegistered: "", selections: "", actualStatus: "", remarks: "" });
   }, [year, memberName]);
 
   const normalizeSheetKey = value => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -7329,6 +7437,60 @@ function EditablePlacementSheet({ year, memberName, records, onReload, onClose }
   const fieldValue = (record, key, type) => drafts[record._id]?.[key] ?? (type === "date" ? dateValue(record[key], record, key) : (record[key] ?? ""));
   const updateDraft = (record, key, value) => {
     setDrafts(prev => ({ ...prev, [record._id]: { ...(prev[record._id] || {}), [key]: value } }));
+  };
+  const openRequest = (record) => {
+    setRequestDraft({
+      record,
+      field: "actualStatus",
+      requestedValue: String(record.actualStatus ?? ""),
+      reason: ""
+    });
+    setRequestMessage("");
+  };
+  const submitRequest = async () => {
+    if (!requestDraft?.record) return;
+    if (!requestDraft.reason.trim()) {
+      setRequestMessage("Please add a reason before sending the request.");
+      return;
+    }
+    setRequestBusy(true);
+    setRequestMessage("");
+    try {
+      await api(`/drives/planner/records/${requestDraft.record._id}/edit-request`, {
+        method: "POST",
+        body: JSON.stringify({
+          reason: requestDraft.reason.trim(),
+          field: requestDraft.field,
+          currentValue: String(requestDraft.record[requestDraft.field] ?? ""),
+          requestedValue: String(requestDraft.requestedValue ?? "")
+        })
+      });
+      setRequestMessage("Request sent to Head successfully.");
+      setTimeout(() => {
+        setRequestDraft(null);
+        setRequestMessage("");
+      }, 1500);
+    } catch (error) {
+      setRequestMessage(error.message);
+    } finally {
+      setRequestBusy(false);
+    }
+  };
+  const submitNewRecord = async (event) => {
+    event.preventDefault();
+    if (!newRecord.companyName.trim()) {
+      setAddMessage("Company name is required.");
+      return;
+    }
+    setAdding(true);
+    setAddMessage("");
+    try {
+      await api("/drives/planner/records", { method: "POST", body: JSON.stringify({ ...newRecord, academicYear: newRecord.academicYear || year }) });
+      setAddMessage("Row added successfully. It is now locked; use Request Change for any correction.");
+      setNewRecord({ academicYear: year || "", companyName: "", jobProfile: "", packageText: "", companyCategory: "", dateFloated: "", dateOfDrive: "", branch: "", mode: "", batch: "", totalEligible: "", totalRegistered: "", selections: "", actualStatus: "", remarks: "" });
+      await onReload?.();
+    } catch (error) { setAddMessage(error.message); }
+    finally { setAdding(false); }
   };
   const saveRecordOnEnter = (event, record) => {
     if (event.key !== "Enter") return;
@@ -7372,9 +7534,33 @@ function EditablePlacementSheet({ year, memberName, records, onReload, onClose }
         </div>
         <div className="editable-planner-header-actions">
           {message && <span className="planner-msg">{message}</span>}
+          {!canEdit && <button type="button" onClick={() => { setShowAddRow(value => !value); setAddMessage(""); }}><FileSpreadsheet size={16} /> {showAddRow ? "Close Add Form" : "Add New Row"}</button>}
           {onClose && <button type="button" className="soft editable-planner-close" onClick={onClose}><X size={16} /> Close Sheet</button>}
         </div>
       </div>
+      {!canEdit && <div className="notice" style={{ marginBottom: "12px" }}>This sheet is read-only for placement officers. Use Request Change to send corrections to Head approval.</div>}
+      {!canEdit && showAddRow && <form className="sheet-request-panel placement-add-row-panel" onSubmit={submitNewRecord}>
+        <div><strong>Add a placement row</strong><p>Entries are added only to your own sheet. Once saved, they cannot be edited directly.</p></div>
+        <div className="form-grid">
+          <label>Academic year<input value={newRecord.academicYear} onChange={e => setNewRecord(prev => ({ ...prev, academicYear: e.target.value }))} placeholder="e.g. 2026-2027" required /></label>
+          <label>Batch<input value={newRecord.batch} onChange={e => setNewRecord(prev => ({ ...prev, batch: e.target.value }))} placeholder="e.g. 2027" /></label>
+          <label>Company name<input value={newRecord.companyName} onChange={e => setNewRecord(prev => ({ ...prev, companyName: e.target.value }))} required /></label>
+          <label>Job profile<input value={newRecord.jobProfile} onChange={e => setNewRecord(prev => ({ ...prev, jobProfile: e.target.value }))} /></label>
+          <label>Company category<input value={newRecord.companyCategory} onChange={e => setNewRecord(prev => ({ ...prev, companyCategory: e.target.value }))} /></label>
+          <label>Package<input value={newRecord.packageText} onChange={e => setNewRecord(prev => ({ ...prev, packageText: e.target.value }))} placeholder="e.g. 6 LPA" /></label>
+          <label>Date floated<input type="date" value={newRecord.dateFloated} onChange={e => setNewRecord(prev => ({ ...prev, dateFloated: e.target.value }))} /></label>
+          <label>Date of drive<input type="date" value={newRecord.dateOfDrive} onChange={e => setNewRecord(prev => ({ ...prev, dateOfDrive: e.target.value }))} /></label>
+          <label>Branch<input value={newRecord.branch} onChange={e => setNewRecord(prev => ({ ...prev, branch: e.target.value }))} /></label>
+          <label>Mode<input value={newRecord.mode} onChange={e => setNewRecord(prev => ({ ...prev, mode: e.target.value }))} placeholder="On Campus / Online" /></label>
+          <label>Total eligible<input type="number" min="0" value={newRecord.totalEligible} onChange={e => setNewRecord(prev => ({ ...prev, totalEligible: e.target.value }))} /></label>
+          <label>Total registered<input type="number" min="0" value={newRecord.totalRegistered} onChange={e => setNewRecord(prev => ({ ...prev, totalRegistered: e.target.value }))} /></label>
+          <label>Selections<input type="number" min="0" value={newRecord.selections} onChange={e => setNewRecord(prev => ({ ...prev, selections: e.target.value }))} /></label>
+          <label>Current status<input value={newRecord.actualStatus} onChange={e => setNewRecord(prev => ({ ...prev, actualStatus: e.target.value }))} placeholder="Open / Closed / Selected" /></label>
+          <label className="wide">Remarks<textarea rows="2" value={newRecord.remarks} onChange={e => setNewRecord(prev => ({ ...prev, remarks: e.target.value }))} /></label>
+        </div>
+        {addMessage && <div className="notice">{addMessage}</div>}
+        <div className="sheet-request-actions"><button type="submit" disabled={adding}>{adding ? "Adding..." : "Add Locked Row"}</button></div>
+      </form>}
       <div className="planner-grid-wrap placement-sheet-wrap">
         <table>
           <thead>
@@ -7388,20 +7574,30 @@ function EditablePlacementSheet({ year, memberName, records, onReload, onClose }
               <tr key={record._id}>
                 {placementSheetColumns.map(([key, label, type]) => (
                   <td key={`${record._id}-${key}`} data-label={label}>
-                    <input
-                      type={type === "date" ? "text" : type}
-                      value={fieldValue(record, key, type)}
-                      title={String(fieldValue(record, key, type) || "")}
-                      placeholder={type === "date" ? "dd-mm-yyyy" : ""}
-                      onChange={event => updateDraft(record, key, event.target.value)}
-                      onKeyDown={event => saveRecordOnEnter(event, record)}
-                    />
+                    {canEdit ? (
+                      <input
+                        type={type === "date" ? "text" : type}
+                        value={fieldValue(record, key, type)}
+                        title={String(fieldValue(record, key, type) || "")}
+                        placeholder={type === "date" ? "dd-mm-yyyy" : ""}
+                        onChange={event => updateDraft(record, key, event.target.value)}
+                        onKeyDown={event => saveRecordOnEnter(event, record)}
+                      />
+                    ) : (
+                      <span className="readonly-sheet-cell">{fieldValue(record, key, type) || "-"}</span>
+                    )}
                   </td>
                 ))}
                 <td className="placement-sheet-actions">
-                  <button onClick={() => saveRecord(record)} disabled={savingId === record._id || !drafts[record._id]}>
-                    <Save size={15} /> {savingId === record._id ? "Saving" : "Save"}
-                  </button>
+                  {canEdit ? (
+                    <button onClick={() => saveRecord(record)} disabled={savingId === record._id || !drafts[record._id]}>
+                      <Save size={15} /> {savingId === record._id ? "Saving" : "Save"}
+                    </button>
+                  ) : (
+                    <button type="button" className="soft" onClick={() => openRequest(record)}>
+                      <FileSearch size={15} /> Request Change
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -7415,6 +7611,30 @@ function EditablePlacementSheet({ year, memberName, records, onReload, onClose }
           </tbody>
         </table>
       </div>
+      {!canEdit && requestDraft && (
+        <div className="sheet-request-panel placement-change-request-panel">
+          <div>
+            <strong>Request change for {requestDraft.record.companyName || "this row"}</strong>
+            <p>Placement officers can’t edit directly. Submit a correction request to Head approval.</p>
+          </div>
+          <label>Field
+            <select value={requestDraft.field} onChange={(event) => setRequestDraft(prev => ({ ...prev, field: event.target.value }))}>
+              {placementSheetColumns.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+          </label>
+          <label>Requested value
+            <input value={requestDraft.requestedValue} onChange={(event) => setRequestDraft(prev => ({ ...prev, requestedValue: event.target.value }))} />
+          </label>
+          <label>Reason
+            <textarea rows="3" value={requestDraft.reason} onChange={(event) => setRequestDraft(prev => ({ ...prev, reason: event.target.value }))} />
+          </label>
+          {requestMessage && <div className="notice">{requestMessage}</div>}
+          <div className="sheet-request-actions">
+            <button type="button" onClick={submitRequest} disabled={requestBusy}>{requestBusy ? "Sending..." : "Send Request"}</button>
+            <button type="button" className="soft" onClick={() => setRequestDraft(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

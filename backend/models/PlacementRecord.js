@@ -38,4 +38,7 @@ const placementRecordSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 placementRecordSchema.index({ academicYear: 1, placementOfficer: 1, companyName: 1 });
+// Supports officer-scoped comparison reports, which query all years for one owner.
+placementRecordSchema.index({ placementOfficer: 1, academicYear: -1, sourceSheetId: 1, sourceSheetGid: 1, sourceRow: 1 });
+placementRecordSchema.index({ leadBy: 1, academicYear: -1, sourceSheetId: 1, sourceSheetGid: 1, sourceRow: 1 });
 export const PlacementRecord = mongoose.model("PlacementRecord", placementRecordSchema);

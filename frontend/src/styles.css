@@ -19679,3 +19679,224 @@ body .target-detail-table td:nth-child(7) {
   text-overflow: clip !important;
   line-height: 1.3 !important;
 }
+
+/* All-batch report cards start as compact summaries; the arrow reveals the full report. */
+.prc-v2-container { position: relative; }
+.prc-v2-summary-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding: 0 18px 16px; }
+.prc-v2-expand {
+  display: flex;
+  margin: 0;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0 13px;
+  color: #ffffff;
+  background: #071b3a;
+  border: 1px solid #071b3a;
+  box-shadow: none;
+  font-size: 13px;
+}
+.prc-v2-expand:hover { background: #0b4d8e; border-color: #0b4d8e; }
+.prc-v2-pdf { min-height: 42px; padding: 0 13px; color: #0b4d8e; background: #ffffff; border: 1px solid #0b4d8e; box-shadow: none; font-size: 13px; }
+.prc-v2-pdf:hover { color: #ffffff; background: #0b4d8e; }
+.prc-v2-card-collapsed .prc-v2-expand svg { transform: rotate(0deg); }
+.prc-v2-container:not(.prc-v2-card-collapsed) .prc-v2-expand svg { transform: rotate(90deg); }
+.prc-v2-card-collapsed .prc-v2-report-grid,
+.prc-v2-card-collapsed .prc-v2-charts-row,
+.prc-v2-card-collapsed .prc-v2-bottom-row { display: none !important; }
+
+.detail-column-picker { position: relative; }
+.detail-column-picker > button { min-height: 42px; white-space: nowrap; }
+.detail-column-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 230px;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #cfdbe8;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 16px 35px rgba(7, 20, 38, .18);
+}
+.detail-column-menu strong { color: #071426; font-size: 13px; }
+.detail-column-menu label { display: flex; align-items: center; gap: 8px; color: #31445b; font-size: 13px; font-weight: 700; }
+.detail-column-menu input { width: 16px; min-height: 16px; padding: 0; }
+
+/* Keep the report-detail controls together at the top-right of the modal. */
+.report-summary-detail header {
+  grid-template-columns: minmax(300px, 1fr) minmax(300px, 480px) auto !important;
+  align-items: center !important;
+}
+.report-detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: max-content;
+}
+.report-detail-actions .report-detail-close {
+  width: 118px !important;
+  min-width: 118px !important;
+  justify-self: auto !important;
+}
+.detail-excel-download { min-height: 42px; white-space: nowrap; }
+
+@media (max-width: 760px) {
+  .prc-v2-summary-actions { padding-right: 14px; padding-left: 14px; flex-wrap: wrap; }
+  .detail-column-picker { width: 100%; }
+  .detail-column-picker > button { width: 100%; }
+  .detail-column-menu { left: 0; right: auto; width: 100%; }
+  .report-summary-detail header { grid-template-columns: 1fr !important; align-items: stretch !important; }
+  .report-detail-actions { min-width: 0; width: 100%; flex-wrap: wrap; }
+  .report-detail-actions .detail-column-picker { flex: 1 1 100%; }
+  .report-detail-actions .report-detail-close { margin-left: auto; }
+}
+
+/* Placement officer sheet: append-only entry and correction request panels */
+.placement-sheet-editor .sheet-request-panel {
+  --placement-red: #8f1d2c;
+  --placement-red-dark: #64111d;
+  --placement-red-soft: #fff4f5;
+  display: grid;
+  gap: 18px;
+  margin: 18px 0;
+  padding: 24px;
+  color: #172033;
+  background: linear-gradient(135deg, #fffafb 0%, #ffffff 62%);
+  border: 1px solid #edbec5;
+  border-left: 5px solid var(--placement-red);
+  border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(100, 17, 29, .10);
+}
+
+.placement-sheet-editor .sheet-request-panel > div:first-child {
+  display: grid;
+  gap: 5px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #f0d5d9;
+}
+
+.placement-sheet-editor .sheet-request-panel strong {
+  color: var(--placement-red-dark);
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: -.015em;
+}
+
+.placement-sheet-editor .sheet-request-panel p {
+  margin: 0;
+  color: #6c3b43;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.placement-sheet-editor .sheet-request-panel label {
+  display: grid;
+  gap: 7px;
+  color: #6f2632;
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: .015em;
+}
+
+.placement-sheet-editor .sheet-request-panel input,
+.placement-sheet-editor .sheet-request-panel select,
+.placement-sheet-editor .sheet-request-panel textarea {
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 12px;
+  color: #26141a;
+  background: #ffffff;
+  border: 1px solid #dcaab2;
+  border-radius: 9px;
+  box-shadow: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.placement-sheet-editor .sheet-request-panel textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.placement-sheet-editor .sheet-request-panel input:focus,
+.placement-sheet-editor .sheet-request-panel select:focus,
+.placement-sheet-editor .sheet-request-panel textarea:focus {
+  outline: 3px solid rgba(143, 29, 44, .16);
+  outline-offset: 1px;
+  border-color: var(--placement-red);
+}
+
+.placement-add-row-panel .form-grid {
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 16px 18px;
+  align-items: start;
+}
+
+.placement-add-row-panel .wide { grid-column: span 2; }
+
+.placement-sheet-editor .sheet-request-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.placement-sheet-editor .sheet-request-actions button,
+.placement-sheet-editor .editable-planner-header-actions > button:not(.soft) {
+  min-height: 42px;
+  padding: 0 17px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #9e2031, #751522);
+  border: 1px solid #751522;
+  border-radius: 9px;
+  box-shadow: 0 7px 15px rgba(117, 21, 34, .20);
+  font-weight: 850;
+}
+
+.placement-sheet-editor .sheet-request-actions button:hover:not(:disabled),
+.placement-sheet-editor .editable-planner-header-actions > button:not(.soft):hover {
+  background: #64111d;
+  border-color: #64111d;
+  transform: translateY(-1px);
+}
+
+.placement-sheet-editor .sheet-request-actions .soft {
+  color: var(--placement-red-dark);
+  background: #ffffff;
+  border-color: #c98c96;
+  box-shadow: none;
+}
+
+.placement-sheet-editor .placement-sheet-actions .soft,
+.placement-sheet-editor .placement-sheet-actions button {
+  color: #ffffff !important;
+  background: #8f1d2c !important;
+  border-color: #8f1d2c !important;
+  box-shadow: 0 5px 12px rgba(100, 17, 29, .18) !important;
+}
+
+.placement-sheet-editor .placement-sheet-actions .soft:hover,
+.placement-sheet-editor .placement-sheet-actions button:hover {
+  background: #64111d !important;
+  border-color: #64111d !important;
+}
+
+@media (max-width: 900px) {
+  .placement-sheet-editor .sheet-request-panel { padding: 18px; }
+  .placement-add-row-panel .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 600px) {
+  .placement-sheet-editor .sheet-request-panel { padding: 16px; border-left-width: 4px; }
+  .placement-add-row-panel .form-grid { grid-template-columns: 1fr; }
+  .placement-add-row-panel .wide { grid-column: auto; }
+  .placement-sheet-editor .sheet-request-actions { display: grid; grid-template-columns: 1fr; }
+  .placement-sheet-editor .sheet-request-actions button { width: 100%; }
+}
